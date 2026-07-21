@@ -28,6 +28,8 @@ import {RenderBlockedError, renderApplication} from "./core/render.js";
 import {slugify} from "./core/slug.js";
 import {applyMinScore, loadProfile, tailorApplication} from "./core/tailor.js";
 import {rebaseTranscript} from "./llm/client.js";
+import {DEFAULT_PORT, startServer} from "./server/index.js";
+import {openStore} from "./tracker/store.js";
 import {
     buildSources,
     fetchPosting,
@@ -272,6 +274,31 @@ function printSearchTable(postings: readonly ScoredPosting[]): void {
     }
     lines.push("", "Pre-score is a keyword hint for ordering only, not the model's match score.");
     process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+/**
+ * Records a pulled posting in the tracker, so a posting reached from the CLI
+ * and one reached from the web UI are the same row in one database.
+ */
+function trackPosting(posting: RawPosting): void {
+    const store = openStore();
+    try {
+        store.upsertPostings([
+            {
+                sourceId: posting.sourceId,
+                source: posting.source,
+                company: posting.company,
+                title: posting.title,
+                location: posting.location,
+                url: posting.url,
+                postedAt: posting.postedAt,
+                fetchedAt: posting.fetchedAt,
+                text: posting.text,
+            },
+        ]);
+    } finally {
+        store.close();
+    }
 }
 
 /** Writes a posting in the exact plain-text shape a pasted job file has. */
@@ -665,8 +692,63 @@ program
             const posting = await fetchPosting(resolveSourceId(reference, cache), {cache});
 
             warnIfTruncated(posting);
+            trackPosting(posting);
             const filePath = await writePostingFile(posting);
             process.stdout.write(`${filePath}\n`);
+        }),
+    );
+
+program
+    .command("serve")
+    .description("Start the local web interface on 127.0.0.1.")
+    .option("--port <n>", "port to listen on", String(DEFAULT_PORT))
+    .option("--open", "open the browser at the served URL")
+    .action(
+        guarded(async (options: {port: string; open?: boolean}) => {
+            const store = openStore();
+            const {url} = await startServer({store, port: Number(options.port)});
+
+            process.stdout.write(
+                `${url}\n\n` +
+                    "Bound to loopback with no authentication — do not put it behind a proxy.\n" +
+                    "Generation runs one at a time. Nothing is ever submitted for you.\n",
+            );
+            if (options.open) openInDefaultApp(url);
+        }),
+    );
+
+program
+    .command("stats")
+    .description("Print the tracker's counts and the gaps that come up most often.")
+    .action(
+        guarded(async () => {
+            const store = openStore();
+            try {
+                const stats = store.stats();
+                const lines = [`${label("Postings")}${stats.total}`];
+
+                for (const [status, count] of Object.entries(stats.byStatus)) {
+                    lines.push(`  ${status.padEnd(12)}${count}`);
+                }
+
+                if (Object.keys(stats.byOutcome).length) {
+                    lines.push("", "Outcomes:");
+                    for (const [outcome, count] of Object.entries(stats.byOutcome)) {
+                        lines.push(`  ${outcome.padEnd(12)}${count}`);
+                    }
+                }
+
+                if (stats.topGaps.length) {
+                    lines.push("", "Most frequent gaps:");
+                    for (const {gap, count} of stats.topGaps) {
+                        lines.push(`  ${String(count).padStart(3)}x  ${gap}`);
+                    }
+                }
+
+                process.stdout.write(`${lines.join("\n")}\n`);
+            } finally {
+                store.close();
+            }
         }),
     );
 

@@ -16,6 +16,10 @@ cv.html
 COMANDOS.md
 # Local search state: fetched postings and the last search's ordering.
 data/postings.cache.json
+# The tracker database: your real applications and their outcomes.
+data/tracker.db
+data/tracker.db-shm
+data/tracker.db-wal
 
 *.log
 npm-debug.log*

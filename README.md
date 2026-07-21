@@ -10,7 +10,7 @@
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" />
   <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A520-339933?logo=nodedotjs&logoColor=white" />
   <img alt="Providers" src="https://img.shields.io/badge/LLM-Gemini%20%7C%20Claude-8A2BE2" />
-  <img alt="Tests" src="https://img.shields.io/badge/tests-147%20passing-success" />
+  <img alt="Tests" src="https://img.shields.io/badge/tests-214%20passing-success" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue" />
 </p>
 
@@ -45,7 +45,7 @@ Written to:  output/kaufland-e-commerce-senior-react-native-engineer
 
 **Contents** — [Quick start](#quick-start) · [Commands](#commands) ·
 [Configuration](#configuration) · [Flags](#flags) · [Design notes](#design-notes) ·
-[Architecture](#architecture) · [Tests](#tests) · [Roadmap](#roadmap)
+[Web interface](#web-interface) · [Architecture](#architecture) · [Tests](#tests) · [Roadmap](#roadmap)
 
 ## What it does
 
@@ -58,6 +58,8 @@ Written to:  output/kaufland-e-commerce-senior-react-native-engineer
    gaps.
 4. **render** — lays the selected bullets and the letter into a CV and cover letter as A4 PDFs,
    and refuses to produce either from an application still carrying a factual flag.
+5. **track** — a local web UI and a SQLite tracker over all of it, from first sighting to
+   outcome. It never submits anything.
 
 Every model response is validated with zod and repaired in-conversation on failure. Google
 Gemini and Anthropic Claude are both supported and swappable per run with `--provider`.
@@ -181,6 +183,21 @@ has, `Company:` header included. Takes a source id or the row number from the la
 job-tailor pull 2                     # the second row of the last search
 job-tailor run --from ashby:nory:abc  # pull and run the whole pipeline in one step
 ```
+
+### `job-tailor serve`
+
+Starts the local web interface. `--port <n>` (4321), `--open`.
+
+```bash
+job-tailor serve --open
+```
+
+See [Web interface](#web-interface) below.
+
+### `job-tailor stats`
+
+Prints the tracker's counts and the gaps that come up most often — the same figures
+`/api/stats` returns, for when you are already in a terminal.
 
 ### `job-tailor sources`
 
@@ -434,6 +451,55 @@ recruiter receives are named for the candidate and company (`moreira-cv-meridian
 A cover letter that will not fit one page throws `RenderOverflowError` rather than shrinking the
 type: an overflowing letter is too long, which is a content problem, not a layout one.
 
+### Web interface
+
+`job-tailor serve` puts a page over the same pipeline: search, generate, read, edit, mark as
+applied, record what came of it.
+
+**It binds to `127.0.0.1` and nothing else, and there is no authentication.** The bind address
+*is* the boundary. The page reads your profile, your postings and your generated letters, so do
+not put it behind a proxy, a tunnel or a `--host` flag — there is deliberately no option to
+change the interface it listens on.
+
+Plain HTML, CSS and vanilla JS, served as static files. No framework, no bundler, no build step
+for the front end: this is a CLI with a UI attached, not a web app. Every string that reaches
+the DOM goes in as `textContent` — job descriptions are third-party text and are never parsed as
+HTML.
+
+**Generation is queued, one at a time.** It costs a model call and takes tens of seconds, so the
+server serialises it and exposes what is running at `GET /api/status`; the page polls that every
+two seconds rather than opening a socket. A queued generation cannot be started twice.
+
+The primary manual step has a box of its own: the cover letter is editable, and saving re-runs
+`reconcile()` and the renderer **without calling the model**. That matters more than convenience
+— flags describe the letter on disk, and an edit is exactly when they stop being true. A claim
+you remove by hand clears its flag; one you introduce raises it. Editing and re-rendering is
+free and repeatable.
+
+**The tool never submits an application.** There is no button for it and there will not be one.
+The last step is always a human attaching the PDFs and pressing send.
+
+Application state lives in SQLite at `data/tracker.db`, with `status` as an enforced state
+machine:
+
+```
+new       -> generating | dismissed
+generating-> generated  | failed
+failed    -> generating | dismissed
+generated -> applied    | dismissed | generating
+applied   -> closed
+dismissed -> new
+closed     (terminal)
+```
+
+An illegal move fails with a sentence naming the moves that *are* available. An outcome
+(`no_response`, `rejected`, `interview`, `offer`) can only be set once you have applied, because
+before that there is nothing to describe.
+
+Gaps are kept in the database for one reason: `stats()` counts the ones that come up most often
+across everything generated. A gap repeated across twenty postings is a study plan, not a
+rejection.
+
 ### Sources: documented APIs only
 
 | Source           | Kind       | Credentials                     | Notes                              |
@@ -538,7 +604,15 @@ src/
 │   ├── cache.ts      postings by sourceId, 30-day eviction, last-search order
 │   ├── registry.ts   name -> source
 │   └── index.ts      searchAll(), fetchPosting(), dedupe, pre-scoring
-└── tracker/store.ts  stub, phase 4 — SQLite application tracking
+├── tracker/
+│   ├── store.ts      SQLite, the status state machine, stats()
+│   └── schema.sql
+└── server/
+    ├── index.ts      fastify app, loopback bind, empty-body JSON parser
+    ├── pipeline.ts   generate / re-render orchestration behind one seam
+    ├── queue.ts      one generation at a time
+    ├── routes.ts     the API, including path-traversal-safe file serving
+    └── public/       index.html, app.js, style.css — no framework, no build
 
 templates/            the single source of visual truth
 ├── base-styles.hbs   fonts, margins, header block — shared by both documents
@@ -546,8 +620,7 @@ templates/            the single source of visual truth
 └── cover-letter.hbs
 ```
 
-The remaining stubs throw `NotImplemented: phase N` and already carry their intended type
-signatures.
+Every phase is now implemented; nothing throws `NotImplemented`.
 
 ## Tests
 
@@ -556,13 +629,19 @@ npm test          # tsc, then vitest
 npm run test:watch
 ```
 
-147 tests. All but one make no network call and drive no browser. They cover the zod schemas
+214 tests. All but one make no network call and drive no browser. They cover the zod schemas
 against valid and malformed fixtures, the `callJson` retry loop against mocked SDKs, provider and
 per-task model resolution, the `ConfigError` for each provider's missing key, Gemini's backoff
 and quota handling, the JSON Schema conversion, the `DEBUG=1` transcript (written when set,
 absent when not), `data/profile.example.yaml` against the `Profile` schema, the reconciliation
 rules, per-country work authorisation, the cover-letter reference/length/paragraph checks,
 unsupported technology claims, the `Company:` header override, and the low-match short-circuit.
+
+The tracker and the server are tested with an in-memory database and `fastify.inject()`: every
+legal status transition and every illegal one, that an outcome is refused before you have
+applied, the list ordering, that the file route rejects `../` and absolute paths, that saving an
+edited letter re-renders **without** the model being called, that the generation queue
+serialises, and that gap frequency aggregates correctly.
 
 The sources are tested against fixtures recorded from the real APIs, with no live call in the
 suite: each source parses into well-formed postings, HTML becomes the expected plain-text shape,
@@ -591,7 +670,7 @@ browser.
 | 1.7   | cover-letter quality fixes from the second real run         | Done   |
 | 2     | keyword pre-filter, CV/letter PDF rendering with refusal rules | Done |
 | 3     | job-board ingestion from documented public APIs             | Done   |
-| 4     | SQLite application tracking                                 | Stub   |
+| 4     | local web UI + SQLite application tracking                  | Done   |
 
 ## License
 
