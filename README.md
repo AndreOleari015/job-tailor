@@ -8,7 +8,7 @@
 
 <p align="center">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" />
-  <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A520-339933?logo=nodedotjs&logoColor=white" />
+  <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A522-339933?logo=nodedotjs&logoColor=white" />
   <img alt="Providers" src="https://img.shields.io/badge/LLM-Gemini%20%7C%20Claude-8A2BE2" />
   <img alt="Tests" src="https://img.shields.io/badge/tests-214%20passing-success" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue" />

@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: [20, 22]
+        node: [22, 24]
     env:
       # Keep CI Chromium-free: skip puppeteer's browser download and the one
       # test that drives it. Every other test runs.
