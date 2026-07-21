@@ -1,0 +1,26 @@
+# Company boards to watch. These are per-company job boards, not search
+# engines: each entry is one employer, and `job-tailor search` fetches all of
+# their open postings and filters locally by your keywords.
+#
+# `token` is the slug in the board URL. `label` is the company name to show and
+# to put in the "Company:" header — Lever and Ashby do not return one, so
+# without a label the token is used.
+#
+# Find the token in the board URL:
+#   https://boards.greenhouse.io/TOKEN
+#   https://jobs.lever.co/TOKEN
+#   https://jobs.ashbyhq.com/TOKEN
+
+greenhouse: []
+# greenhouse:
+#   - token: examplecorp
+#     label: Example Corp
+
+lever: []
+# lever:
+#   - token: examplestartup
+#     label: Example Startup
+
+ashby:
+  - token: nory
+    label: Nory

@@ -6,8 +6,13 @@ import {mkdir, readFile, writeFile} from "node:fs/promises";
 import path from "node:path";
 import {
     ConfigError,
+    DEFAULT_SEARCH_LIMIT,
     isDebug,
     isProviderName,
+    readAdzunaCredentials,
+    readArbeitsagenturKey,
+    readCompaniesPath,
+    readJobsDir,
     readMinScore,
     readOutputDir,
     readPreScoreMin,
@@ -23,6 +28,17 @@ import {RenderBlockedError, renderApplication} from "./core/render.js";
 import {slugify} from "./core/slug.js";
 import {applyMinScore, loadProfile, tailorApplication} from "./core/tailor.js";
 import {rebaseTranscript} from "./llm/client.js";
+import {
+    buildSources,
+    fetchPosting,
+    isSourceName,
+    loadCompanies,
+    PostingCache,
+    searchAll,
+    SOURCE_NAMES,
+    type RawPosting,
+    type ScoredPosting,
+} from "./sources/index.js";
 import {
     flags,
     jobSpecSchema,
@@ -214,6 +230,86 @@ function printPreScoreSkip(
     process.stdout.write(`${lines.join("\n")}\n`);
 }
 
+/* ------------------------------------------------------------------ */
+/* Sources                                                              */
+/* ------------------------------------------------------------------ */
+
+function truncate(value: string, width: number): string {
+    return value.length <= width ? value.padEnd(width) : `${value.slice(0, width - 1)}…`;
+}
+
+function printSearchTable(postings: readonly ScoredPosting[]): void {
+    if (!postings.length) {
+        process.stdout.write("No postings matched.\n");
+        return;
+    }
+
+    const header = [
+        "  #".padEnd(4),
+        truncate("COMPANY", 22),
+        truncate("TITLE", 40),
+        truncate("LOCATION", 22),
+        truncate("SOURCE", 15),
+        "PRE",
+    ].join("  ");
+    const lines = [header, "-".repeat(header.length)];
+
+    postings.forEach((posting, index) => {
+        lines.push(
+            [
+                String(index + 1).padStart(3).padEnd(4),
+                truncate(posting.company ?? "(unknown)", 22),
+                truncate(posting.title, 40),
+                truncate(posting.location ?? "—", 22),
+                truncate(posting.textTruncated ? `${posting.source}*` : posting.source, 15),
+                (posting.preScore === null ? "—" : String(posting.preScore)).padStart(3),
+            ].join("  "),
+        );
+    });
+
+    if (postings.some((posting) => posting.textTruncated)) {
+        lines.push("", "* description is truncated at the source; pull it and read before tailoring.");
+    }
+    lines.push("", "Pre-score is a keyword hint for ordering only, not the model's match score.");
+    process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+/** Writes a posting in the exact plain-text shape a pasted job file has. */
+async function writePostingFile(posting: RawPosting): Promise<string> {
+    const name = `${slugify(posting.company ?? "unknown")}-${slugify(posting.title)}.txt`;
+    const filePath = path.join(readJobsDir(), name);
+    const resolved = path.resolve(filePath);
+
+    await mkdir(path.dirname(resolved), {recursive: true});
+    await writeFile(resolved, posting.text, "utf8");
+    return filePath;
+}
+
+/** A shortened description hides requirements; say so before the model reads it. */
+function warnIfTruncated(posting: RawPosting): void {
+    if (!posting.textTruncated) return;
+    note(
+        `[job-tailor] ${posting.source} returns a truncated description. Tailoring from it ` +
+            `reads requirements that are not all there — open ${posting.url} and paste the ` +
+            "full text for anything you intend to send.",
+    );
+}
+
+/** Resolves a `pull` argument: a source id, or a 1-based index from the last search. */
+function resolveSourceId(reference: string, cache: PostingCache): string {
+    const trimmed = reference.trim();
+    if (/^\d+$/.test(trimmed)) {
+        const sourceId = cache.fromLastSearch(Number(trimmed));
+        if (!sourceId) {
+            throw new Error(
+                `No posting at index ${trimmed} in the last search. Run \`job-tailor search\` first.`,
+            );
+        }
+        return sourceId;
+    }
+    return trimmed;
+}
+
 interface RenderTarget {
     profile: Profile;
     jobSpec: JobSpec;
@@ -365,6 +461,26 @@ interface RunOptions {
     force?: boolean;
     render: boolean;
     open?: boolean;
+    from?: string;
+}
+
+/**
+ * The job text for a run: pulled from a source when --from is given, otherwise
+ * read from a file or stdin. A pulled posting is written to jobs/ first, so the
+ * input to every run is a file on disk either way.
+ */
+async function resolveRunInput(
+    source: string | undefined,
+    from: string | undefined,
+): Promise<string> {
+    if (!from) return readJobText(source);
+
+    const cache = await PostingCache.open();
+    const posting = await fetchPosting(resolveSourceId(from, cache), {cache});
+
+    warnIfTruncated(posting);
+    note(`Pulled ${posting.sourceId} to ${await writePostingFile(posting)}`);
+    return posting.text;
 }
 
 program
@@ -373,13 +489,14 @@ program
     .argument("[source]", "path to a job description file, or - for stdin")
     .option("--profile <path>", "path to the profile YAML", readProfilePath())
     .option("--out-dir <path>", "root directory for artefacts", readOutputDir())
+    .option("--from <sourceId>", "pull a posting from a source instead of reading a file")
     .option("--force", "generate and render the letter past the score and refusal checks")
     .option("--no-render", "write JSON only; skip the CV and cover-letter PDFs")
     .option("--open", "open the rendered CV with the OS default handler")
     .option(PROVIDER_FLAG, PROVIDER_HELP)
     .action(
         guarded(async (source: string | undefined, options: RunOptions) => {
-            const jobText = await readJobText(source);
+            const jobText = await resolveRunInput(source, options.from);
             const profile = await loadProfile(options.profile);
 
             const jobSpec = await extractJobSpec(jobText);
@@ -463,6 +580,138 @@ program
                 if (options.open) openInDefaultApp(rendered.cvPath);
             },
         ),
+    );
+
+interface SearchOptions {
+    source?: string[];
+    country?: string;
+    location?: string;
+    remote?: boolean;
+    postedWithin?: string;
+    limit: string;
+    refresh?: boolean;
+    json?: boolean;
+    profile: string;
+}
+
+program
+    .command("search")
+    .description("Search the configured job sources. Never calls the model, so it is free.")
+    .argument("[keywords...]", "words that must appear in the title or description")
+    .option(
+        "--source <name>",
+        "restrict to a source; repeatable",
+        (value: string, previous: string[] = []) => {
+            if (!isSourceName(value)) {
+                throw new ConfigError(
+                    `--source must be one of ${SOURCE_NAMES.join(", ")}, got "${value}".`,
+                );
+            }
+            return [...previous, value];
+        },
+    )
+    .option("--country <code>", "ISO 3166-1 alpha-2, for the aggregator sources")
+    .option("--location <string>", "match postings whose location contains this")
+    .option("--remote", "prefer remote postings where the source supports it")
+    .option("--posted-within <days>", "only postings published in the last N days")
+    .option("--limit <n>", "maximum rows", String(DEFAULT_SEARCH_LIMIT))
+    .option("--refresh", "ignore the cache and refetch everything")
+    .option("--json", "machine-readable output")
+    .option("--profile <path>", "path to the profile YAML", readProfilePath())
+    .action(
+        guarded(async (keywords: string[], options: SearchOptions) => {
+            const profile = await loadProfile(options.profile);
+            const cache = await PostingCache.open();
+
+            const result = await searchAll({
+                query: {
+                    keywords,
+                    ...(options.location ? {location: options.location} : {}),
+                    ...(options.country ? {country: options.country} : {}),
+                    ...(options.remote ? {remote: true} : {}),
+                    ...(options.postedWithin
+                        ? {postedWithinDays: Number(options.postedWithin)}
+                        : {}),
+                },
+                profile,
+                sources: options.source ?? [],
+                limit: Number(options.limit),
+                ...(options.refresh ? {refresh: true} : {}),
+                cache,
+                registry: {companies: await loadCompanies(readCompaniesPath())},
+            });
+
+            // Remember the printed order so `pull 3` means the third row.
+            cache.rememberSearch(result.postings.map((posting) => posting.sourceId));
+            await cache.save();
+
+            for (const warning of result.warnings) note(`[job-tailor] ${warning}`);
+
+            if (options.json) {
+                printJson(result.postings);
+                return;
+            }
+            printSearchTable(result.postings);
+        }),
+    );
+
+program
+    .command("pull")
+    .description("Write a posting from the last search to a job file, ready for `run`.")
+    .argument("<reference>", "a sourceId, or the index from the last search")
+    .action(
+        guarded(async (reference: string) => {
+            const cache = await PostingCache.open();
+            const posting = await fetchPosting(resolveSourceId(reference, cache), {cache});
+
+            warnIfTruncated(posting);
+            const filePath = await writePostingFile(posting);
+            process.stdout.write(`${filePath}\n`);
+        }),
+    );
+
+program
+    .command("sources")
+    .description("List the configured sources and whether each one can run.")
+    .action(
+        guarded(async () => {
+            const companies = await loadCompanies(readCompaniesPath());
+            const sources = await buildSources({companies});
+
+            const available: Record<string, boolean> = {
+                adzuna: Boolean(readAdzunaCredentials()),
+                arbeitsagentur: Boolean(readArbeitsagenturKey()),
+            };
+
+            const lines: string[] = [];
+            for (const source of sources) {
+                const ready = available[source.name] ?? true;
+                const status = ready ? "ready" : "needs credentials";
+                lines.push(`${source.name.padEnd(16)}${source.kind.padEnd(12)}${status}`);
+
+                const entries =
+                    source.name === "greenhouse"
+                        ? companies.greenhouse
+                        : source.name === "lever"
+                          ? companies.lever
+                          : source.name === "ashby"
+                            ? companies.ashby
+                            : [];
+                for (const entry of entries) {
+                    lines.push(`  - ${entry.label ?? entry.token} (${entry.token})`);
+                }
+                if (source.kind === "board" && !entries.length) {
+                    lines.push(`  (no tokens configured in ${readCompaniesPath()})`);
+                }
+            }
+
+            lines.push(
+                "",
+                "Only documented public APIs are used. Sites whose terms prohibit automated",
+                "access are deliberately not implemented.",
+            );
+            process.stdout.write(`${lines.join("\n")}\n`);
+        }),
     );
 
 try {

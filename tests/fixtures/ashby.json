@@ -1,0 +1,62 @@
+{
+  "jobs": [
+    {
+      "id": "cf02c70a-be52-4b15-b4c2-466dba90a762",
+      "title": "Senior Product Designer – Inventory",
+      "location": "UK - Remote",
+      "secondaryLocations": [
+        {
+          "location": "Dublin",
+          "address": {
+            "postalAddress": {
+              "addressRegion": "",
+              "addressCountry": "Ireland",
+              "addressLocality": "Dublin"
+            }
+          }
+        }
+      ],
+      "publishedAt": "2026-07-09T13:41:37.541+00:00",
+      "jobUrl": "https://jobs.ashbyhq.com/nory/cf02c70a-be52-4b15-b4c2-466dba90a762",
+      "descriptionHtml": "<p style=\"min-height:1.5em\"><strong>Let’s fix hospitality, for good.</strong></p><p style=\"min-height:1.5em\">Hospitality is tough – margins are thin, waste is high, and teams are stretched. But it doesn’t have to be this hard. That’s why we built <strong>Nory</strong>.</p><p style=\"min-height:1.5em\">Our CEO, Conor, knows the pain first-hand. After founding and scaling Mad Egg in Ireland, he got fed up with juggling “market-leading” systems, clunky spreadsheets, and endless printouts. So he set out to build the tool he wished he’d had from day one.</p><p style=\"min-height:1.5em\">Nory is an all-",
+      "descriptionPlain": "Let’s fix hospitality, for good.\n\nHospitality is tough – margins are thin, waste is high, and teams are stretched. But it doesn’t have to be this hard. That’s why we built Nory.\n\nOur CEO, Conor, knows the pain first-hand. After founding and scaling Mad Egg in Ireland, he got fed up with juggling “market-leading” systems, clunky spreadsheets, and endless printouts. So he set out to build the tool h",
+      "isListed": true,
+      "isRemote": true,
+      "employmentType": "FullTime"
+    },
+    {
+      "id": "58aff69e-12be-4e26-953b-ffb6915ec701",
+      "title": "Staff Engineer",
+      "location": "Dublin",
+      "secondaryLocations": [
+        {
+          "location": "Spain",
+          "address": {
+            "postalAddress": {
+              "addressCountry": "Spain",
+              "addressLocality": "Barcelona"
+            }
+          }
+        },
+        {
+          "location": "London - Hybrid",
+          "address": {
+            "postalAddress": {
+              "addressRegion": "England",
+              "addressCountry": "United Kingdom",
+              "addressLocality": "London"
+            }
+          }
+        }
+      ],
+      "publishedAt": "2026-06-02T15:12:33.405+00:00",
+      "jobUrl": "https://jobs.ashbyhq.com/nory/58aff69e-12be-4e26-953b-ffb6915ec701",
+      "descriptionHtml": "<p style=\"min-height:1.5em\"><strong>Let's fix hospitality, for good.</strong></p><p style=\"min-height:1.5em\">Hospitality is tough – margins are thin, waste is high, and teams are stretched. But it doesn't have to be this hard. That's why we built <strong>Nory</strong>.</p><p style=\"min-height:1.5em\">Our CEO, Conor, knows the pain first-hand. After founding and scaling Mad Egg in Ireland, he got fed up with juggling \"market-leading\" systems, clunky spreadsheets, and endless printouts. So he set out to build the tool he wished he'd had from day one.</p><p style=\"min-height:1.5em\">Nory is an all-",
+      "descriptionPlain": "Let's fix hospitality, for good.\n\nHospitality is tough – margins are thin, waste is high, and teams are stretched. But it doesn't have to be this hard. That's why we built Nory.\n\nOur CEO, Conor, knows the pain first-hand. After founding and scaling Mad Egg in Ireland, he got fed up with juggling \"market-leading\" systems, clunky spreadsheets, and endless printouts. So he set out to build the tool h",
+      "isListed": true,
+      "isRemote": true,
+      "employmentType": "FullTime"
+    }
+  ],
+  "apiVersion": "1"
+}

@@ -10,7 +10,7 @@
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" />
   <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A520-339933?logo=nodedotjs&logoColor=white" />
   <img alt="Providers" src="https://img.shields.io/badge/LLM-Gemini%20%7C%20Claude-8A2BE2" />
-  <img alt="Tests" src="https://img.shields.io/badge/tests-120%20passing-success" />
+  <img alt="Tests" src="https://img.shields.io/badge/tests-147%20passing-success" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue" />
 </p>
 
@@ -49,12 +49,14 @@ Written to:  output/kaufland-e-commerce-senior-react-native-engineer
 
 ## What it does
 
-1. **extract** — parses raw job-description text into a validated `JobSpec`: company, role,
+1. **search** — collects postings from documented public job APIs and writes one to a job file,
+   in the same plain text a pasted posting has.
+2. **extract** — parses raw job-description text into a validated `JobSpec`: company, role,
    country, required stack, salary, visa sponsorship, tone.
-2. **tailor** — picks which of your pre-written CV bullets fit that role, writes a headline, a
+3. **tailor** — picks which of your pre-written CV bullets fit that role, writes a headline, a
    profile summary and a cover letter, and returns an honest match score plus a blunt list of
    gaps.
-3. **render** — lays the selected bullets and the letter into a CV and cover letter as A4 PDFs,
+4. **render** — lays the selected bullets and the letter into a CV and cover letter as A4 PDFs,
    and refuses to produce either from an application still carrying a factual flag.
 
 Every model response is validated with zod and repaired in-conversation on failure. Google
@@ -149,6 +151,41 @@ letter is blanked and the gaps are kept; `--force` generates it anyway.
 | `--open`      | Open the rendered CV with the OS default handler.               |
 | `--provider`  | `gemini` or `anthropic` for this run.                           |
 
+### `job-tailor search [keywords...]`
+
+Searches every configured source and prints the results ordered by pre-score.
+**It never calls the model** — searching has to be free, or it will not be done often enough
+to matter.
+
+```console
+$ job-tailor search engineer --source ashby --limit 5
+
+  #   COMPANY       TITLE                                LOCATION                SOURCE    PRE
+  1   Nory          Senior Mobile Engineer               Spain, Dublin, London…  ashby      50
+  2   Nory          Senior Product Engineer - Insights   Dublin, Spain, London…  ashby      50
+```
+
+`--source <name>` (repeatable), `--country`, `--location`, `--remote`, `--posted-within <days>`,
+`--limit <n>` (50), `--refresh`, `--json`.
+
+The pre-score is `preScore()` from `core/match.ts` against a lightweight JobSpec built from the
+technologies the posting names. It is an ordering hint, nothing more — a `—` means the posting
+named no technology the vocabulary recognises, which is not the same as scoring zero.
+
+### `job-tailor pull <sourceId | index>`
+
+Writes a posting to `jobs/{company}-{title}.txt` in the same plain-text shape a pasted posting
+has, `Company:` header included. Takes a source id or the row number from the last search.
+
+```bash
+job-tailor pull 2                     # the second row of the last search
+job-tailor run --from ashby:nory:abc  # pull and run the whole pipeline in one step
+```
+
+### `job-tailor sources`
+
+Lists each source, whether its credentials are present, and the board tokens configured for it.
+
 ### `job-tailor render <output-dir>`
 
 Re-render the CV and cover letter from the `job.json` and `application.json` already in a
@@ -196,6 +233,10 @@ diff -r output/acme-*/            # compare the two cover letters
 | `JOB_TAILOR_PROFILE`       | `data/profile.yaml` | Profile path.                                        |
 | `JOB_TAILOR_OUTPUT_DIR`    | `output`            | Where `run` writes artefacts.                        |
 | `PUPPETEER_EXECUTABLE_PATH`| —                   | Use a system Chromium for rendering instead of the bundled one. |
+| `ARBEITSAGENTUR_API_KEY`   | —                   | Public client key for the German job board source.   |
+| `ADZUNA_APP_ID` / `_KEY`   | —                   | Adzuna account; without both, the source is skipped. |
+| `JOB_TAILOR_COMPANIES`     | `data/companies.yaml` | Board tokens `search` watches.                     |
+| `JOB_TAILOR_JOBS_DIR`      | `jobs`              | Where `pull` writes job files.                       |
 | `DEBUG`                    | —                   | `1` logs usage, writes transcripts, full traces.     |
 
 Model resolution per task is `JOB_TAILOR_{TASK}_MODEL` > `JOB_TAILOR_MODEL` > provider default,
@@ -393,6 +434,47 @@ recruiter receives are named for the candidate and company (`moreira-cv-meridian
 A cover letter that will not fit one page throws `RenderOverflowError` rather than shrinking the
 type: an overflowing letter is too long, which is a content problem, not a layout one.
 
+### Sources: documented APIs only
+
+| Source           | Kind       | Credentials                     | Notes                              |
+| ---------------- | ---------- | ------------------------------- | ---------------------------------- |
+| `greenhouse`     | board      | none                            | Per-company board, full text.      |
+| `lever`          | board      | none                            | Per-company board, full text.      |
+| `ashby`          | board      | none                            | Per-company board, full text.      |
+| `adzuna`         | aggregator | `ADZUNA_APP_ID` + `ADZUNA_APP_KEY` | Descriptions are **truncated**. |
+| `arbeitsagentur` | aggregator | `ARBEITSAGENTUR_API_KEY`        | German federal job board.          |
+
+**Only documented public JSON APIs are used.** There is no scraper here for LinkedIn, Indeed,
+Glassdoor or any site whose terms prohibit automated access, and there will not be one. Every
+fetcher identifies itself with a descriptive User-Agent, honours `Retry-After`, backs off on 429
+and 5xx, and runs under a global concurrency limit of 3.
+
+The board sources are per-company, not search engines: you list board tokens in
+`data/companies.yaml` and the keyword filtering happens client-side. The aggregators take the
+query itself.
+
+**Every automated posting flows through the same path as a pasted one.** A fetched posting is
+converted to plain text — paragraphs as blank lines, list items as `- ` lines — with the
+`Company:`/`Location:` header prepended, which is the deterministic override `companyFromHeader()`
+already enforces in `extract.ts`. From there it is the identical extract → tailor → reconcile →
+render pipeline, with every check intact. Automation changes where the text comes from and
+nothing about what is done with it.
+
+Two consequences worth stating:
+
+- **A failing source is normal, not fatal.** A dead board token, a 500 from an aggregator or a
+  missing credential produces a warning on stderr and an empty result set. Partial results are
+  the expected case.
+- **Aggregator text is truncated, and the tool says so.** Adzuna returns a shortened description;
+  those postings are marked, printed with a `*`, and the CLI warns before tailoring from one,
+  because a truncated posting hides requirements the letter would then be written against.
+
+Fetched postings are cached in `data/postings.cache.json`, keyed by source id and evicted after
+30 days. The cache stops a posting being fetched twice — for `arbeitsagentur`, whose search
+returns metadata only, that saves a detail request per result. `--refresh` bypasses it. The same
+role often appears on both a board and an aggregator; dedupe by normalised company + title +
+location keeps the board copy, since its text is complete.
+
 ### A cheap filter before an expensive call
 
 `match.ts` computes a deterministic, zero-cost pre-score from keyword overlap between the
@@ -446,7 +528,16 @@ src/
 │   ├── match.ts      deterministic keyword pre-score, the cheap pre-filter
 │   ├── render.ts     selection + templates -> HTML -> PDF, refusal rules
 │   └── slug.ts       company/role/name slugs, shared by dirs and filenames
-├── sources/index.ts  stub, phase 3 — job-board ingestion
+├── sources/
+│   ├── types.ts      RawPosting, SourceQuery, JobSource
+│   ├── http.ts       User-Agent, 20s timeout, Retry-After, backoff, concurrency 3
+│   ├── text.ts       HTML -> the plain text the extract prompt was tuned on
+│   ├── board.ts      shared per-company-board runner
+│   ├── greenhouse.ts / lever.ts / ashby.ts      company boards, full text
+│   ├── adzuna.ts / arbeitsagentur.ts            aggregators
+│   ├── cache.ts      postings by sourceId, 30-day eviction, last-search order
+│   ├── registry.ts   name -> source
+│   └── index.ts      searchAll(), fetchPosting(), dedupe, pre-scoring
 └── tracker/store.ts  stub, phase 4 — SQLite application tracking
 
 templates/            the single source of visual truth
@@ -465,13 +556,20 @@ npm test          # tsc, then vitest
 npm run test:watch
 ```
 
-120 tests. All but one make no network call and drive no browser. They cover the zod schemas
+147 tests. All but one make no network call and drive no browser. They cover the zod schemas
 against valid and malformed fixtures, the `callJson` retry loop against mocked SDKs, provider and
 per-task model resolution, the `ConfigError` for each provider's missing key, Gemini's backoff
 and quota handling, the JSON Schema conversion, the `DEBUG=1` transcript (written when set,
 absent when not), `data/profile.example.yaml` against the `Profile` schema, the reconciliation
 rules, per-country work authorisation, the cover-letter reference/length/paragraph checks,
 unsupported technology claims, the `Company:` header override, and the low-match short-circuit.
+
+The sources are tested against fixtures recorded from the real APIs, with no live call in the
+suite: each source parses into well-formed postings, HTML becomes the expected plain-text shape,
+the `Company:` header survives into `companyFromHeader()`, cross-source dedupe keeps the board
+copy, a cached posting is not refetched, a failing source warns without aborting the search, the
+backoff retries a 429 and honours `Retry-After`, and Adzuna is skipped with a readable message
+when its credentials are absent.
 
 Rendering is tested on its HTML, never on PDF bytes: the refusal for every blocking flag, the
 `--force` watermark, that only selected bullets appear and in `bullet_order`, that an entry with
@@ -492,7 +590,7 @@ browser.
 | 1.6   | corrections from the first real run, low-match short-circuit | Done  |
 | 1.7   | cover-letter quality fixes from the second real run         | Done   |
 | 2     | keyword pre-filter, CV/letter PDF rendering with refusal rules | Done |
-| 3     | job-board ingestion                                         | Stub   |
+| 3     | job-board ingestion from documented public APIs             | Done   |
 | 4     | SQLite application tracking                                 | Stub   |
 
 ## License

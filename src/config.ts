@@ -97,6 +97,35 @@ export function readOutputDir(): string {
 }
 
 /* ------------------------------------------------------------------ */
+/* Job sources (phase 3)                                                */
+/* ------------------------------------------------------------------ */
+
+export const DEFAULT_SEARCH_LIMIT = 50;
+
+/** Adzuna is the only source needing an account; both halves or neither. */
+export function readAdzunaCredentials(): {appId: string; appKey: string} | undefined {
+    const appId = env("ADZUNA_APP_ID");
+    const appKey = env("ADZUNA_APP_KEY");
+    return appId && appKey ? {appId, appKey} : undefined;
+}
+
+/**
+ * The static client header the arbeitsagentur jobsuche API requires. Kept in
+ * config rather than hardcoded so a change on their side is an .env edit.
+ */
+export function readArbeitsagenturKey(): string | undefined {
+    return env("ARBEITSAGENTUR_API_KEY");
+}
+
+export function readCompaniesPath(): string {
+    return env("JOB_TAILOR_COMPANIES") ?? "data/companies.yaml";
+}
+
+export function readJobsDir(): string {
+    return env("JOB_TAILOR_JOBS_DIR") ?? "jobs";
+}
+
+/* ------------------------------------------------------------------ */
 /* Provider selection                                                   */
 /* ------------------------------------------------------------------ */
 

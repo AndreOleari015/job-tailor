@@ -1,0 +1,27 @@
+{
+  "count": 2,
+  "results": [
+    {
+      "id": "4812345678",
+      "title": "Senior React Native Engineer",
+      "description": "We are looking for a React Native engineer to own our mobile apps. You will work with TypeScript, Expo and CI/CD pipelines. The role covers the full release cycle from feature work to store submissi…",
+      "redirect_url": "https://www.adzuna.co.uk/jobs/land/ad/4812345678",
+      "created": "2026-07-18T09:14:22Z",
+      "company": {"display_name": "Meridian Retail"},
+      "location": {"display_name": "Berlin, Germany", "area": ["Germany", "Berlin"]},
+      "salary_min": 70000,
+      "salary_max": 85000
+    },
+    {
+      "id": "4812345679",
+      "title": "Backend Engineer (Node.js)",
+      "description": "Join our platform team building Node.js services on AWS. Experience with PostgreSQL and Docker required. We ship daily and own our services end to en…",
+      "redirect_url": "https://www.adzuna.co.uk/jobs/land/ad/4812345679",
+      "created": "2026-07-15T11:02:00Z",
+      "company": {"display_name": "Northwind Data"},
+      "location": {"display_name": "Dublin, Ireland", "area": ["Ireland", "Dublin"]},
+      "salary_min": 65000,
+      "salary_max": 80000
+    }
+  ]
+}

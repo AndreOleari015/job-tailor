@@ -1,0 +1,42 @@
+{
+  "stellenangebote": [
+    {
+      "refnr": "12265-399943_JB5184795-S",
+      "titel": "Embedded Software Entwickler (m/w/d)",
+      "beruf": "Softwareentwickler/in",
+      "arbeitgeber": "FERCHAU GmbH Niederlassung Berlin Süd",
+      "aktuelleVeroeffentlichungsdatum": "2026-06-30",
+      "arbeitsort": {
+        "plz": "10115",
+        "ort": "Berlin",
+        "strasse": "null",
+        "region": "Berlin",
+        "land": "Deutschland",
+        "koordinaten": {
+          "lat": 52.531976082,
+          "lon": 13.38673791
+        },
+        "entfernung": "3"
+      }
+    },
+    {
+      "refnr": "12265-485965_JB5183448-S",
+      "titel": "Embedded-Software-Entwickler (m/w/d)",
+      "beruf": "Softwareentwickler/in",
+      "arbeitgeber": "FERCHAU GmbH Niederlassung Berlin Süd",
+      "aktuelleVeroeffentlichungsdatum": "2026-06-29",
+      "arbeitsort": {
+        "plz": "12489",
+        "ort": "Berlin",
+        "strasse": "null",
+        "region": "Berlin",
+        "land": "Deutschland",
+        "koordinaten": {
+          "lat": 52.435920336,
+          "lon": 13.542341496
+        },
+        "entfernung": "12"
+      }
+    }
+  ]
+}

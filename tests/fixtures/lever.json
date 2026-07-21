@@ -1,0 +1,60 @@
+[
+  {
+    "id": "33538a2f-d27d-4a96-8f05-fa4b0e4d940e",
+    "text": "AbelsonTaylor Writer",
+    "hostedUrl": "https://jobs.lever.co/leverdemo/33538a2f-d27d-4a96-8f05-fa4b0e4d940e",
+    "createdAt": 1553186035299,
+    "categories": {
+      "commitment": "Regular Full Time (Salary)",
+      "department": "Customer Success",
+      "location": "Arlington, TX",
+      "team": "Professional Services",
+      "allLocations": [
+        "Arlington, TX"
+      ]
+    },
+    "workplaceType": "hybrid",
+    "descriptionPlain": "Welcome to the Demo Job Listing for Lever! This is a fictional job created solely for demonstration purposes and is not an actual open position. We’ve crafted this listing to showcase the functionality of our ATS platform, including job descriptions, application processes, and more.\n\nWhile you can e",
+    "description": "<div>Welcome to the <b>Demo Job Listing</b> for Lever! This is a fictional job created solely for demonstration purposes and is <b>not an actual open position</b>. We’ve crafted this listing to showcase the functionality of our ATS platform, including job descriptions, application processes, and mor",
+    "lists": [
+      {
+        "text": "Qualifications",
+        "content": "<li>be smart</li><li>be very smart</li>"
+      },
+      {
+        "text": "Duties",
+        "content": "<li>work hard</li><li>work VERY hard</li><li><b>bold text</b></li><li><i>italic text</i></li><li><s>strikethrough text</s></li><li><u>underline text</u></li><li><a rel=\"noopener noreferrer\" class=\"postings-link\" href=\"https://google.com\">link text</a></li>"
+      }
+    ],
+    "additionalPlain": "you will never find a job better than this one!!!\n\n\nLever builds modern recruiting software for teams to source, interview, and hire top talent. Our team strives to set a new bar for enterprise softwa"
+  },
+  {
+    "id": "dbedd284-e008-4961-b75c-e70d284eab5a",
+    "text": "Account Director (Inside/Outside Hybrid Sales)",
+    "hostedUrl": "https://jobs.lever.co/leverdemo/dbedd284-e008-4961-b75c-e70d284eab5a",
+    "createdAt": 1502907102690,
+    "categories": {
+      "commitment": "Regular Full Time (Salary)",
+      "department": "Sales",
+      "location": "Atlanta, Georgia",
+      "team": "Account Executive",
+      "allLocations": [
+        "Atlanta, Georgia"
+      ]
+    },
+    "workplaceType": "hybrid",
+    "descriptionPlain": "Welcome to the Demo Job Listing for Lever! This is a fictional job created solely for demonstration purposes and is not an actual open position. We’ve crafted this listing to showcase the functionality of our ATS platform, including job descriptions, application processes, and more.\n\nWhile you can e",
+    "description": "<div>Welcome to the <b>Demo Job Listing</b> for Lever! This is a fictional job created solely for demonstration purposes and is <b>not an actual open position</b>. We’ve crafted this listing to showcase the functionality of our ATS platform, including job descriptions, application processes, and mor",
+    "lists": [
+      {
+        "text": "About the Gig:",
+        "content": "<li>You will be responsible for owning a territory of higher education institutions (universities and colleges) across North America</li><li>You will be a Top Hat &nbsp;brand ambassador and business development executive within your territory</li><li>You will grow the campus user base through lead g"
+      },
+      {
+        "text": "About You:",
+        "content": "<li>You are highly motivated, energetic and have unparalleled interpersonal and communication skills</li><li>You have previous cold-calling experience in an outbound sales environment (or are incredibly eager to learn!)</li><li>You are detail-oriented and a self-starter</li><li>You have completed a "
+      }
+    ],
+    "additionalPlain": "Lever builds modern recruiting software for teams to source, interview, and hire top talent. Our team strives to set a new bar for enterprise software with modern, well-designed, real-time apps. We pa"
+  }
+]
