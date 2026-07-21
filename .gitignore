@@ -1,0 +1,18 @@
+node_modules/
+dist/
+output/
+
+.env
+.env.local
+
+# Personal data. data/profile.example.yaml is the committed template.
+data/profile.yaml
+curriculos/
+jobs/
+memory/
+
+*.log
+npm-debug.log*
+.DS_Store
+.vitest/
+coverage/

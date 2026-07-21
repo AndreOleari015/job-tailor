@@ -1,0 +1,154 @@
+# Example profile. Copy it to data/profile.yaml and replace every value with your own:
+#
+#   cp data/profile.example.yaml data/profile.yaml
+#
+# Every factual claim the tool can make about you lives in this file. The model
+# selects bullets by `id` and never writes bullet text, so anything not written
+# here cannot reach a CV or a cover letter.
+#
+# Rules that matter:
+#   - Every bullet needs a stable, unique `id`. Ids are the model's only handle
+#     on your history; renaming one invalidates saved applications.
+#   - `tags` are free-form and drive phase-2 deterministic scoring.
+#   - Write the bullet you would be happy to see printed. It is used verbatim.
+
+basics:
+  name: Alex Moreira
+  email: alex.moreira@example.com
+  phone: "+353 1 234 5678"
+  github: github.com/example-user
+  linkedin: linkedin.com/in/example-user
+  location: Dublin, Ireland
+  # Keyed by ISO 3166-1 alpha-2. An empty string means nothing may be said about
+  # work authorisation for that country — omission is always safer than a
+  # statement that does not apply there.
+  work_authorisation:
+    DE: >-
+      Eligible for the EU Blue Card under section 18g AufenthG as an IT
+      specialist, based on 4+ years of professional software experience.
+    IE: ""
+    ES: ""
+    PT: ""
+
+experience:
+  - id: polar-labs
+    role: Software Engineer
+    company: Polar Labs
+    from: "2024-11"
+    to: "2026-07"
+    location: Remote
+    bullets:
+      - id: pl-volume
+        text: >-
+          Contributed to 30+ cross-platform applications from concept to App
+          Store and Google Play publication using React Native, Expo and
+          TypeScript.
+        tags: [react-native, expo, typescript, mobile, delivery, volume]
+      - id: pl-tooling
+        text: >-
+          Authored internal tooling, including a shared component library and
+          Fastlane release pipelines, reducing the store release process from a
+          full working day to a few hours.
+        tags: [ci-cd, fastlane, tooling, developer-experience, ownership]
+      - id: pl-architecture
+        text: >-
+          Designed reusable component architecture and Firebase/REST
+          integrations with real-time data synchronisation.
+        tags: [architecture, firebase, rest, realtime, frontend]
+      - id: pl-cicd
+        text: >-
+          Built CI/CD pipelines with GitHub Actions and Expo EAS, and
+          implemented RevenueCat subscription flows and Cloudflare Workers edge
+          services.
+        tags: [ci-cd, github-actions, eas, revenuecat, cloudflare, backend]
+      - id: pl-domains
+        text: >-
+          Shipped features spanning AI image recognition, price comparison,
+          public open data and event management.
+        tags: [ai, integrations, open-data, product]
+
+  - id: freelance
+    role: Mobile & Backend Developer
+    company: Freelance
+    from: "2022-01"
+    to: present
+    bullets:
+      - id: fl-e2e
+        text: >-
+          Delivered client applications end to end, including an inventory
+          management system, from requirements gathering to store release.
+        tags: [end-to-end, client-facing, requirements, mobile]
+      - id: fl-backend
+        text: >-
+          Built lightweight backend services in Node.js, PHP and Firebase Cloud
+          Functions against Firestore and third-party APIs.
+        tags: [node, php, firebase-functions, firestore, backend, apis]
+
+  - id: kestrel
+    role: Mobile Developer
+    company: Kestrel Software
+    from: "2022-11"
+    to: "2023-01"
+    location: Brazil
+    bullets:
+      - id: st-offline
+        text: >-
+          Implemented offline-first authentication and data synchronisation in
+          React Native against Node.js/MySQL REST services.
+        tags: [offline-first, auth, sync, react-native, mysql, rest]
+
+projects:
+  - id: transit-app
+    name: "Transit: live departures"
+    description: Live public transport app, published June 2026.
+    bullets:
+      - id: bt-opendata
+        text: >-
+          Designed, built and published a public transport app integrating
+          national open transit data, with real-time and scheduled departures
+          for bus, tram and rail, stop search, saved stops, live vehicle maps,
+          reminders and service alerts. 100+ downloads in the first month.
+        tags: [open-data, maps, realtime, solo-project, ireland, product]
+
+  - id: guest-list
+    name: Guest List
+    description: Event guest-list, RSVP and live check-in platform.
+    bullets:
+      - id: lv-scale
+        text: >-
+          Built an offline-first event check-in platform used across 222 events,
+          with WhatsApp/email invitations, spreadsheet import, PDF/Excel
+          reporting, multi-user receptionist access and multilingual support.
+        tags: [offline-first, scale, reporting, i18n, multi-user, product]
+
+  - id: scoreboard
+    name: Scoreboard
+    description: Tournament and scorekeeping manager.
+    bullets:
+      - id: sb-brackets
+        text: >-
+          Implemented live scoring, timers and bracket generation for group
+          stage, round-robin and knockout formats, with local persistence for
+          offline venues.
+        tags: [algorithms, state-management, offline, local-storage]
+
+skills:
+  languages: [TypeScript, JavaScript, PHP, SQL]
+  mobile: [React Native, Expo, Expo Router, EAS Build, Fastlane]
+  web_backend: [React, Node.js, Firebase Cloud Functions, REST APIs]
+  data: [Firestore, MySQL]
+  devops: [GitHub Actions, Cloudflare Workers, Git]
+  other: [Offline-first architecture, Real-time sync, RevenueCat, Figma]
+
+education:
+  - degree: Technologist in Systems Analysis and Development
+    institution: Example Federal Institute
+    from: "2022-03"
+    to: "2024-12"
+    note: NARIC comparability statement obtained.
+
+languages:
+  - language: Portuguese
+    level: Native
+  - language: English
+    level: B1
