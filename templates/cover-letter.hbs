@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{name}} — Cover letter</title>
+<style>
+{{> baseStyles}}
+
+  .date { font-size: 9.4pt; color: var(--muted); margin: 22px 0 18px; }
+
+  .recipient {
+    font-size: 9.6pt;
+    line-height: 1.5;
+    margin-bottom: 18px;
+  }
+  .recipient .company { font-weight: 600; color: var(--ink); }
+  .recipient .location { color: var(--muted); }
+
+  .salutation { margin: 0 0 12px; }
+
+  .body p {
+    margin: 0 0 11px;
+    text-align: justify;
+  }
+  .body p:last-child { margin-bottom: 0; }
+
+  .sign-off { margin-top: 22px; }
+  .sign-off .name { margin-top: 16px; font-weight: 600; }
+</style>
+</head>
+<body>
+{{#if watermark}}<div class="watermark">{{watermark}}</div>{{/if}}
+
+<header>
+  <h1>{{displayName}}</h1>
+  <div class="contact">
+    {{#each contact}}<span>{{#if href}}<a href="{{href}}">{{text}}</a>{{else}}{{text}}{{/if}}</span>{{/each}}
+  </div>
+</header>
+
+<div class="date">{{date}}</div>
+
+{{#if recipient}}
+<div class="recipient">
+  <div class="company">{{recipient.company}}</div>
+  {{#if recipient.location}}<div class="location">{{recipient.location}}</div>{{/if}}
+</div>
+{{/if}}
+
+<p class="salutation">{{salutation}}</p>
+
+<div class="body">
+{{#each paragraphs}}
+  <p>{{this}}</p>
+{{/each}}
+</div>
+
+<div class="sign-off">
+  <div>{{signOff}}</div>
+  <div class="name">{{name}}</div>
+</div>
+
+</body>
+</html>

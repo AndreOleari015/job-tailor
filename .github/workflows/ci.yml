@@ -11,6 +11,11 @@ jobs:
     strategy:
       matrix:
         node: [20, 22]
+    env:
+      # Keep CI Chromium-free: skip puppeteer's browser download and the one
+      # test that drives it. Every other test runs.
+      PUPPETEER_SKIP_DOWNLOAD: "1"
+      JOB_TAILOR_SKIP_PDF: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -3,6 +3,7 @@ import {
     collectBulletIds,
     jobSpecSchema,
     profileSchema,
+    storedApplicationSchema,
     tailoredApplicationSchema,
 } from "../src/types.js";
 
@@ -113,6 +114,21 @@ describe("tailoredApplicationSchema", () => {
 
     it("rejects an empty cover letter", () => {
         const result = tailoredApplicationSchema.safeParse({...validApplication, cover_letter: ""});
+        expect(result.success).toBe(false);
+    });
+});
+
+describe("storedApplicationSchema", () => {
+    it("accepts a blanked cover letter the write schema would reject", () => {
+        // A skipped-low-match application on disk has cover_letter: "". The read
+        // schema must parse it; the write schema deliberately does not.
+        const skipped = {...validApplication, cover_letter: ""};
+        expect(tailoredApplicationSchema.safeParse(skipped).success).toBe(false);
+        expect(storedApplicationSchema.safeParse(skipped).success).toBe(true);
+    });
+
+    it("still validates the rest of the shape", () => {
+        const result = storedApplicationSchema.safeParse({...validApplication, match_score: 140});
         expect(result.success).toBe(false);
     });
 });

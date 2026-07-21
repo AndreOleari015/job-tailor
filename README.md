@@ -10,7 +10,7 @@
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" />
   <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A520-339933?logo=nodedotjs&logoColor=white" />
   <img alt="Providers" src="https://img.shields.io/badge/LLM-Gemini%20%7C%20Claude-8A2BE2" />
-  <img alt="Tests" src="https://img.shields.io/badge/tests-91%20passing-success" />
+  <img alt="Tests" src="https://img.shields.io/badge/tests-120%20passing-success" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue" />
 </p>
 
@@ -54,6 +54,8 @@ Written to:  output/kaufland-e-commerce-senior-react-native-engineer
 2. **tailor** — picks which of your pre-written CV bullets fit that role, writes a headline, a
    profile summary and a cover letter, and returns an honest match score plus a blunt list of
    gaps.
+3. **render** — lays the selected bullets and the letter into a CV and cover letter as A4 PDFs,
+   and refuses to produce either from an application still carrying a factual flag.
 
 Every model response is validated with zod and repaired in-conversation on failure. Google
 Gemini and Anthropic Claude are both supported and swappable per run with `--provider`.
@@ -61,10 +63,13 @@ Gemini and Anthropic Claude are both supported and swappable per run with `--pro
 ## Quick start
 
 ```bash
-npm install
+npm install                                    # puppeteer fetches a Chromium for rendering
 cp .env.example .env                          # add the key for one provider
 cp data/profile.example.yaml data/profile.yaml # then replace it with your own CV
 ```
+
+To skip that Chromium download and point at a browser you already have, set
+`PUPPETEER_SKIP_DOWNLOAD=1` before installing and `PUPPETEER_EXECUTABLE_PATH` at run time.
 
 `data/profile.yaml` is your CV as a set of tagged, pre-written bullets. Each bullet needs a
 stable `id` — ids are the model's only handle on your history, and it can never rewrite the
@@ -133,9 +138,23 @@ Note what is *not* in that object: bullet text. The model returns ids.
 ### `job-tailor run <file|->`
 
 Extract then tailor in one pass. Writes `job.json` and `application.json` to
-`output/{company-slug}-{role-slug}/` and prints the summary shown at the top of this README.
-Below `JOB_TAILOR_MIN_SCORE` the cover letter is blanked and the gaps are kept; `--force`
-generates it anyway.
+`output/{company-slug}-{role-slug}/`, renders the CV and cover-letter PDFs beside them, and
+prints the summary shown at the top of this README. Below `JOB_TAILOR_MIN_SCORE` the cover
+letter is blanked and the gaps are kept; `--force` generates it anyway.
+
+| Flag          | Meaning                                                         |
+| ------------- | --------------------------------------------------------------- |
+| `--force`     | Generate and render past the score and refusal checks.          |
+| `--no-render` | Write JSON only; skip the PDFs.                                  |
+| `--open`      | Open the rendered CV with the OS default handler.               |
+| `--provider`  | `gemini` or `anthropic` for this run.                           |
+
+### `job-tailor render <output-dir>`
+
+Re-render the CV and cover letter from the `job.json` and `application.json` already in a
+directory — no model call. This is the loop for editing a letter by hand and regenerating:
+open `cover-letter.html`, fix a sentence, `job-tailor render output/acme-…`. `--force` and
+`--open` behave as in `run`.
 
 Every command reports the provider and model it used, so an output is never ambiguous about
 what produced it. `extract` and `tailor` report it on stderr, keeping stdout pure JSON for
@@ -173,8 +192,10 @@ diff -r output/acme-*/            # compare the two cover letters
 | `JOB_TAILOR_MAX_TOKENS`    | `16000`             | Output cap per call (Anthropic).                     |
 | `JOB_TAILOR_MAX_RETRIES`   | `2`                 | Repair attempts after a failed parse.                |
 | `JOB_TAILOR_MIN_SCORE`     | `40`                | Below this, `run` blanks the letter (`--force` off). |
+| `JOB_TAILOR_PRESCORE_MIN`  | `0`                 | Above 0, skip a posting below this keyword pre-score before tailoring. |
 | `JOB_TAILOR_PROFILE`       | `data/profile.yaml` | Profile path.                                        |
 | `JOB_TAILOR_OUTPUT_DIR`    | `output`            | Where `run` writes artefacts.                        |
+| `PUPPETEER_EXECUTABLE_PATH`| —                   | Use a system Chromium for rendering instead of the bundled one. |
 | `DEBUG`                    | —                   | `1` logs usage, writes transcripts, full traces.     |
 
 Model resolution per task is `JOB_TAILOR_{TASK}_MODEL` > `JOB_TAILOR_MODEL` > provider default,
@@ -337,6 +358,51 @@ stall is never unexplained. A per-day quota is detected and fails immediately ra
 burning the retry window; both surface as `LlmQuotaError` with a message pointing at
 `--provider anthropic`.
 
+### Rendering: the template holds the look, the JSON holds the facts
+
+`render.ts` turns an application into a CV and a cover letter as A4 PDFs (handlebars for the
+HTML, headless Chromium via puppeteer for the print). The split that runs through the whole
+project runs through rendering too:
+
+- **The template is the single source of visual truth.** Fonts, margins, the header block, the
+  section rules — all of it lives in `templates/`, shared between both documents so a CV and a
+  letter read as one set. Change the look in one place.
+- **The JSON is the single source of factual truth.** The template never *decides* anything. CV
+  bullets are the ones whose id is in `selected_bullet_ids`, ordered by `bullet_order`, with the
+  prose taken verbatim from the profile; an experience entry with no selected bullet is dropped
+  entirely, heading and all. The renderer arranges facts; it never introduces one.
+
+**The renderer refuses to produce a document from a flagged application.** If the application
+carries `UNEXPECTED_AUTHORISATION_CLAIM`, `COVER_LETTER_REF_MISMATCH`, `UNSUPPORTED_TECH_CLAIM`
+or `INVALID_BULLET_IDS_DROPPED`, `renderApplication` throws `RenderBlockedError` and writes no
+PDF. The reason is the difference between the two artefacts: JSON is a thing you *read*, a PDF
+is a thing you *attach*, and a flagged draft one drag from an email is exactly the accident this
+project exists to prevent. Fix the letter, re-render, or pass `--force`.
+
+`--force` does render a flagged application — and stamps `DRAFT — UNVERIFIED CLAIMS` in grey on
+page one of both documents, so a forced render can never be mistaken for a clean one. A
+`SKIPPED_LOW_MATCH` application renders the CV and no letter: the CV is still true, the letter
+was never written.
+
+Alongside the PDFs the renderer writes the exact `cv.html` and `cover-letter.html` it printed
+from. That HTML is what makes a bad document debuggable and the output testable — the tests
+assert on it, never on PDF bytes, which are not stable across Chromium versions. Files a
+recruiter receives are named for the candidate and company (`moreira-cv-meridian.pdf`), not
+`cv.pdf`.
+
+A cover letter that will not fit one page throws `RenderOverflowError` rather than shrinking the
+type: an overflowing letter is too long, which is a content problem, not a layout one.
+
+### A cheap filter before an expensive call
+
+`match.ts` computes a deterministic, zero-cost pre-score from keyword overlap between the
+profile and the posting — required stack weighted double, nice-to-have single, widened only by a
+small table of spelling aliases (`rn` = `react native`). It is a filter, not a judgement: it
+never reaches a document, and it is not the model's `match_score`. With `JOB_TAILOR_PRESCORE_MIN`
+above 0, `run` skips a posting below the threshold before spending the tailoring call, printing
+the matched and missing terms. It is off by default, because rejecting a posting on keyword
+overlap alone is a decision to opt into.
+
 ### Debugging a bad run
 
 `DEBUG=1` writes the full model interaction next to the artefacts, so a disappointing cover
@@ -377,13 +443,20 @@ src/
 ├── core/
 │   ├── extract.ts    job text  -> JobSpec
 │   ├── tailor.ts     profile + JobSpec -> TailoredApplication, reconciliation
-│   ├── match.ts      stub, phase 2 — deterministic tag-based scoring
-│   └── render.ts     stub, phase 2 — handlebars + puppeteer output
+│   ├── match.ts      deterministic keyword pre-score, the cheap pre-filter
+│   ├── render.ts     selection + templates -> HTML -> PDF, refusal rules
+│   └── slug.ts       company/role/name slugs, shared by dirs and filenames
 ├── sources/index.ts  stub, phase 3 — job-board ingestion
 └── tracker/store.ts  stub, phase 4 — SQLite application tracking
+
+templates/            the single source of visual truth
+├── base-styles.hbs   fonts, margins, header block — shared by both documents
+├── cv.hbs
+└── cover-letter.hbs
 ```
 
-Stubs throw `NotImplemented: phase N` and already carry their intended type signatures.
+The remaining stubs throw `NotImplemented: phase N` and already carry their intended type
+signatures.
 
 ## Tests
 
@@ -392,13 +465,21 @@ npm test          # tsc, then vitest
 npm run test:watch
 ```
 
-91 tests, no network calls. They cover the zod schemas against valid and malformed fixtures, the
-`callJson` retry loop against mocked SDKs, provider and per-task model resolution, the
-`ConfigError` for each provider's missing key, Gemini's backoff and quota handling, the JSON
-Schema conversion, the `DEBUG=1` transcript (written when set, absent when not),
-`data/profile.example.yaml` against the `Profile` schema, the reconciliation rules, per-country
-work authorisation, the cover-letter reference/length/paragraph checks, unsupported technology
-claims, the `Company:` header override, and the low-match short-circuit.
+120 tests. All but one make no network call and drive no browser. They cover the zod schemas
+against valid and malformed fixtures, the `callJson` retry loop against mocked SDKs, provider and
+per-task model resolution, the `ConfigError` for each provider's missing key, Gemini's backoff
+and quota handling, the JSON Schema conversion, the `DEBUG=1` transcript (written when set,
+absent when not), `data/profile.example.yaml` against the `Profile` schema, the reconciliation
+rules, per-country work authorisation, the cover-letter reference/length/paragraph checks,
+unsupported technology claims, the `Company:` header override, and the low-match short-circuit.
+
+Rendering is tested on its HTML, never on PDF bytes: the refusal for every blocking flag, the
+`--force` watermark, that only selected bullets appear and in `bullet_order`, that an entry with
+no selected bullets vanishes, the skipped-low-match CV-only path, the omitted recipient block,
+and paragraph splitting. The pre-score has its own suite for weighting, aliases and the
+no-fuzzy-match rule. One integration test drives real Chromium and asserts only that a >1KB PDF
+lands on disk; it skips when `JOB_TAILOR_SKIP_PDF=1`, which CI sets so the suite needs no
+browser.
 
 `npm test` runs `tsc` first, so a type error fails the suite.
 
@@ -410,7 +491,7 @@ claims, the `Company:` header override, and the low-match short-circuit.
 | 1.5   | multi-provider LLM layer (Gemini default, Anthropic opt-in) | Done   |
 | 1.6   | corrections from the first real run, low-match short-circuit | Done  |
 | 1.7   | cover-letter quality fixes from the second real run         | Done   |
-| 2     | deterministic tag scoring, CV/letter PDF rendering          | Stub   |
+| 2     | keyword pre-filter, CV/letter PDF rendering with refusal rules | Done |
 | 3     | job-board ingestion                                         | Stub   |
 | 4     | SQLite application tracking                                 | Stub   |
 

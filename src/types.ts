@@ -91,6 +91,12 @@ export const languageEntrySchema = z.object({
     level: nonEmpty,
 });
 
+export const certificationEntrySchema = z.object({
+    name: nonEmpty,
+    issuer: z.string().optional(),
+    year: z.string().optional(),
+});
+
 export const profileSchema = z.object({
     basics: basicsSchema,
     experience: z.array(experienceEntrySchema),
@@ -98,6 +104,7 @@ export const profileSchema = z.object({
     skills: z.record(z.string(), z.array(z.string())),
     education: z.array(educationEntrySchema),
     languages: z.array(languageEntrySchema),
+    certifications: z.array(certificationEntrySchema).optional(),
 });
 
 export type Bullet = z.infer<typeof bulletSchema>;
@@ -106,6 +113,7 @@ export type ProjectEntry = z.infer<typeof projectEntrySchema>;
 export type Basics = z.infer<typeof basicsSchema>;
 export type EducationEntry = z.infer<typeof educationEntrySchema>;
 export type LanguageEntry = z.infer<typeof languageEntrySchema>;
+export type CertificationEntry = z.infer<typeof certificationEntrySchema>;
 export type Profile = z.infer<typeof profileSchema>;
 
 /* ------------------------------------------------------------------ */
@@ -126,6 +134,17 @@ export const tailoredApplicationSchema = z.object({
 });
 
 export type TailoredApplication = z.infer<typeof tailoredApplicationSchema>;
+
+/**
+ * The read schema for an `application.json` already on disk, which is
+ * deliberately looser than the write schema: below `JOB_TAILOR_MIN_SCORE` the
+ * cover letter is blanked on purpose, so a skipped application does not
+ * satisfy `cover_letter: nonEmpty` and would fail to parse against the schema
+ * that produced it. Relax the reader, never the writer.
+ */
+export const storedApplicationSchema = tailoredApplicationSchema.extend({
+    cover_letter: z.string(),
+});
 
 /** Flags recomputed deterministically after the model responds. */
 export const flags = {

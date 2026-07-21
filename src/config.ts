@@ -34,6 +34,13 @@ export const DEFAULT_OUTPUT_DIR = "output";
 export const DEFAULT_MIN_SCORE = 40;
 
 /**
+ * Below this deterministic pre-score `run` skips the posting before the
+ * tailoring call. 0 disables the filter, which is the default: a threshold
+ * that rejects a posting on keyword overlap alone has to be opted into.
+ */
+export const DEFAULT_PRESCORE_MIN = 0;
+
+/**
  * Annual gross EUR below which an offer is flagged. Currently the German
  * EU Blue Card threshold for IT specialists without a degree in the field.
  */
@@ -52,13 +59,14 @@ function env(name: string): string | undefined {
     return value ? value : undefined;
 }
 
-function readInt(name: string, fallback: number): number {
+function readInt(name: string, fallback: number, min = 1): number {
     const raw = env(name);
     if (!raw) return fallback;
 
     const value = Number.parseInt(raw, 10);
-    if (!Number.isFinite(value) || value <= 0) {
-        throw new ConfigError(`${name} must be a positive integer, got "${raw}".`);
+    if (!Number.isFinite(value) || value < min) {
+        const bound = min === 1 ? "a positive integer" : `an integer >= ${min}`;
+        throw new ConfigError(`${name} must be ${bound}, got "${raw}".`);
     }
     return value;
 }
@@ -73,6 +81,11 @@ export function readMaxRetries(): number {
 
 export function readMinScore(): number {
     return readInt("JOB_TAILOR_MIN_SCORE", DEFAULT_MIN_SCORE);
+}
+
+/** 0 disables the pre-filter entirely, so this one accepts zero. */
+export function readPreScoreMin(): number {
+    return readInt("JOB_TAILOR_PRESCORE_MIN", DEFAULT_PRESCORE_MIN, 0);
 }
 
 export function readProfilePath(): string {

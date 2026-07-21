@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import Anthropic from "@anthropic-ai/sdk";
 import {Command} from "commander";
+import {spawn} from "node:child_process";
 import {mkdir, readFile, writeFile} from "node:fs/promises";
 import path from "node:path";
 import {
@@ -9,6 +10,7 @@ import {
     isProviderName,
     readMinScore,
     readOutputDir,
+    readPreScoreMin,
     readProfilePath,
     resolveModel,
     resolveProviderName,
@@ -16,9 +18,19 @@ import {
     type Task,
 } from "./config.js";
 import {extractJobSpec} from "./core/extract.js";
+import {preScore} from "./core/match.js";
+import {RenderBlockedError, renderApplication} from "./core/render.js";
+import {slugify} from "./core/slug.js";
 import {applyMinScore, loadProfile, tailorApplication} from "./core/tailor.js";
 import {rebaseTranscript} from "./llm/client.js";
-import {flags, jobSpecSchema, type JobSpec, type TailoredApplication} from "./types.js";
+import {
+    flags,
+    jobSpecSchema,
+    storedApplicationSchema,
+    type JobSpec,
+    type Profile,
+    type TailoredApplication,
+} from "./types.js";
 
 const STDIN_MARKERS = new Set(["-", "--", "/dev/stdin"]);
 
@@ -81,15 +93,48 @@ async function writeJson(filePath: string, value: unknown): Promise<void> {
     await writeFile(resolved, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-function slugify(value: string): string {
-    const slug = value
-        .normalize("NFD")
-        .replace(/\p{Diacritic}/gu, "")
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .slice(0, 60)
-        .replace(/^-+|-+$/g, "");
-    return slug || "unknown";
+async function readStoredApplication(filePath: string): Promise<TailoredApplication> {
+    const raw = await readTextFile(filePath);
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw);
+    } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`"${filePath}" is not valid JSON: ${reason}`);
+    }
+
+    // The stored schema tolerates a blanked cover letter; the write schema does not.
+    const result = storedApplicationSchema.safeParse(parsed);
+    if (!result.success) {
+        const issues = result.error.issues
+            .map((issue) => `  - ${issue.path.join(".") || "(root)"}: ${issue.message}`)
+            .join("\n");
+        throw new Error(`"${filePath}" does not match the application schema:\n${issues}`);
+    }
+    return result.data;
+}
+
+/** Opens a file with the OS default handler. A no-op on an unrecognised platform. */
+function openInDefaultApp(filePath: string): void {
+    const opener =
+        process.platform === "darwin"
+            ? "open"
+            : process.platform === "win32"
+              ? "start"
+              : process.platform === "linux"
+                ? "xdg-open"
+                : undefined;
+    if (!opener) {
+        note(`--open is not supported on ${process.platform}; skipping.`);
+        return;
+    }
+    const child = spawn(opener, [filePath], {
+        stdio: "ignore",
+        detached: true,
+        shell: process.platform === "win32",
+    });
+    child.on("error", () => note(`Could not open ${filePath} automatically.`));
+    child.unref();
 }
 
 /* ------------------------------------------------------------------ */
@@ -148,6 +193,59 @@ function printSummary(jobSpec: JobSpec, application: TailoredApplication, outDir
 
     lines.push(`${label("Written to")}${outDir}`);
     process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+function printPreScoreSkip(
+    jobSpec: JobSpec,
+    pre: {score: number; matchedTerms: string[]; missingTerms: string[]},
+    threshold: number,
+    outDir: string,
+): void {
+    const lines = [
+        `${label("Company")}${jobSpec.company}`,
+        `${label("Role")}${jobSpec.role}`,
+        `${label("Pre-score")}${pre.score}/100 (threshold ${threshold})`,
+        `${label("Matched")}${pre.matchedTerms.length ? pre.matchedTerms.join(", ") : "(none)"}`,
+        `${label("Missing")}${pre.missingTerms.length ? pre.missingTerms.join(", ") : "(none)"}`,
+        `${label("Written to")}${outDir}`,
+        "",
+        `Skipped before tailoring: pre-score ${pre.score}/100. Re-run with --force.`,
+    ];
+    process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+interface RenderTarget {
+    profile: Profile;
+    jobSpec: JobSpec;
+    application: TailoredApplication;
+    outDir: string;
+    force?: boolean;
+}
+
+/**
+ * Renders, returning the paths, or null when the refusal fired. A blocked
+ * render is a normal outcome — a flagged draft is not printable — so it prints
+ * the reason and does not abort the surrounding command.
+ */
+async function renderAndReport(
+    target: RenderTarget,
+): Promise<{cvPath: string; coverPath: string | null} | null> {
+    try {
+        return await renderApplication(target);
+    } catch (error) {
+        if (error instanceof RenderBlockedError) {
+            note(`[job-tailor] ${error.message}`);
+            return null;
+        }
+        throw error;
+    }
+}
+
+function reportRenderPaths(rendered: {cvPath: string; coverPath: string | null}): void {
+    process.stdout.write(`${label("CV")}${rendered.cvPath}\n`);
+    process.stdout.write(
+        `${label("Cover letter")}${rendered.coverPath ?? "(not rendered)"}\n`,
+    );
 }
 
 /* ------------------------------------------------------------------ */
@@ -261,51 +359,108 @@ program
         }),
     );
 
+interface RunOptions {
+    profile: string;
+    outDir: string;
+    force?: boolean;
+    render: boolean;
+    open?: boolean;
+}
+
 program
     .command("run")
     .description("Extract and tailor in one pass, writing both artefacts to output/.")
     .argument("[source]", "path to a job description file, or - for stdin")
     .option("--profile <path>", "path to the profile YAML", readProfilePath())
     .option("--out-dir <path>", "root directory for artefacts", readOutputDir())
-    .option("--force", `generate the letter even below JOB_TAILOR_MIN_SCORE`)
+    .option("--force", "generate and render the letter past the score and refusal checks")
+    .option("--no-render", "write JSON only; skip the CV and cover-letter PDFs")
+    .option("--open", "open the rendered CV with the OS default handler")
     .option(PROVIDER_FLAG, PROVIDER_HELP)
+    .action(
+        guarded(async (source: string | undefined, options: RunOptions) => {
+            const jobText = await readJobText(source);
+            const profile = await loadProfile(options.profile);
+
+            const jobSpec = await extractJobSpec(jobText);
+            noteUnknownCompany(jobSpec);
+            const outDir = path.join(
+                options.outDir,
+                `${slugify(jobSpec.company)}-${slugify(jobSpec.role)}`,
+            );
+
+            // The slug only exists now, so move extraction's DEBUG transcript
+            // under it before tailoring writes its own.
+            await rebaseTranscript(path.join(outDir, "debug"));
+
+            // The deterministic pre-filter: skip an obviously irrelevant posting
+            // before spending the tailoring call. Disabled (0) by default.
+            const preScoreMin = readPreScoreMin();
+            if (preScoreMin > 0 && !options.force) {
+                const pre = preScore(profile, jobSpec);
+                if (pre.score < preScoreMin) {
+                    await writeJson(path.join(outDir, "job.json"), jobSpec);
+                    printPreScoreSkip(jobSpec, pre, preScoreMin, outDir);
+                    return;
+                }
+            }
+
+            const tailored = await tailorApplication(profile, jobSpec);
+            const application = applyMinScore(tailored, {
+                minScore: readMinScore(),
+                force: options.force,
+            });
+            const skipped = application.flags.includes(flags.skippedLowMatch);
+
+            await writeJson(path.join(outDir, "job.json"), jobSpec);
+            await writeJson(path.join(outDir, "application.json"), application);
+
+            const rendered =
+                options.render &&
+                (await renderAndReport({profile, jobSpec, application, outDir, force: options.force}));
+
+            printSummary(jobSpec, application, outDir);
+            if (rendered) reportRenderPaths(rendered);
+            if (skipped) {
+                process.stdout.write(
+                    `\nSkipped: match below threshold (${Math.round(tailored.match_score)}/100). ` +
+                        "Re-run with --force to generate anyway.\n",
+                );
+            }
+            if (options.open && rendered) openInDefaultApp(rendered.cvPath);
+        }),
+    );
+
+program
+    .command("render")
+    .description("Re-render the CV and cover letter from a directory's job.json and application.json.")
+    .argument("<dir>", "an output directory produced by `run`")
+    .option("--profile <path>", "path to the profile YAML", readProfilePath())
+    .option("--force", "render past the refusal checks, stamping a draft watermark")
+    .option("--open", "open the rendered CV with the OS default handler")
     .action(
         guarded(
             async (
-                source: string | undefined,
-                options: {profile: string; outDir: string; force?: boolean},
+                dir: string,
+                options: {profile: string; force?: boolean; open?: boolean},
             ) => {
-                const jobText = await readJobText(source);
-                const profile = await loadProfile(options.profile);
+                const [profile, jobSpec, application] = await Promise.all([
+                    loadProfile(options.profile),
+                    readJobSpecFile(path.join(dir, "job.json")),
+                    readStoredApplication(path.join(dir, "application.json")),
+                ]);
 
-                const jobSpec = await extractJobSpec(jobText);
-                noteUnknownCompany(jobSpec);
-                const outDir = path.join(
-                    options.outDir,
-                    `${slugify(jobSpec.company)}-${slugify(jobSpec.role)}`,
-                );
-
-                // The slug only exists now, so move extraction's DEBUG transcript
-                // under it before tailoring writes its own.
-                await rebaseTranscript(path.join(outDir, "debug"));
-
-                const tailored = await tailorApplication(profile, jobSpec);
-                const application = applyMinScore(tailored, {
-                    minScore: readMinScore(),
+                const rendered = await renderAndReport({
+                    profile,
+                    jobSpec,
+                    application,
+                    outDir: dir,
                     force: options.force,
                 });
-                const skipped = application.flags.includes(flags.skippedLowMatch);
+                if (!rendered) return;
 
-                await writeJson(path.join(outDir, "job.json"), jobSpec);
-                await writeJson(path.join(outDir, "application.json"), application);
-
-                printSummary(jobSpec, application, outDir);
-                if (skipped) {
-                    process.stdout.write(
-                        `\nSkipped: match below threshold (${Math.round(tailored.match_score)}/100). ` +
-                            "Re-run with --force to generate anyway.\n",
-                    );
-                }
+                reportRenderPaths(rendered);
+                if (options.open) openInDefaultApp(rendered.cvPath);
             },
         ),
     );

@@ -10,6 +10,8 @@ data/profile.yaml
 curriculos/
 jobs/
 memory/
+# Reference CV holding real profile data; templates/ is the committed source of truth.
+cv.html
 
 *.log
 npm-debug.log*

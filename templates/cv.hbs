@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{name}} — CV</title>
+<style>
+{{> baseStyles}}
+
+  p.summary { margin: 0; text-align: justify; }
+
+  .entry { margin-bottom: 11px; page-break-inside: avoid; }
+
+  .entry-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+  }
+
+  .entry-title { font-weight: 600; font-size: 10.2pt; }
+  .entry-org { font-weight: 400; }
+  .entry-meta {
+    font-size: 8.8pt;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .entry-sub {
+    font-size: 8.8pt;
+    color: var(--muted);
+    margin-top: 1px;
+  }
+
+  ul { margin: 5px 0 0; padding-left: 15px; }
+  li { margin-bottom: 3px; }
+
+  .skills-row { margin-bottom: 3px; font-size: 9.4pt; }
+  .skills-row b {
+    display: inline-block;
+    min-width: 92px;
+    font-weight: 600;
+  }
+
+  .two-col { display: flex; gap: 28px; }
+  .two-col > div { flex: 1; }
+</style>
+</head>
+<body>
+{{#if watermark}}<div class="watermark">{{watermark}}</div>{{/if}}
+
+<header>
+  <h1>{{displayName}}</h1>
+  <p class="title">{{headline}}</p>
+  <div class="contact">
+    {{#each contact}}<span>{{#if href}}<a href="{{href}}">{{text}}</a>{{else}}{{text}}{{/if}}</span>{{/each}}
+  </div>
+</header>
+
+<h2>Profile</h2>
+<p class="summary">{{summary}}</p>
+
+{{#if projects.length}}
+<h2>Selected Projects</h2>
+{{#each projects}}
+<div class="entry">
+  <div class="entry-head">
+    <span class="entry-title">{{title}}{{#if org}}<span class="entry-org"> — {{org}}</span>{{/if}}</span>
+    {{#if meta}}<span class="entry-meta">{{meta}}</span>{{/if}}
+  </div>
+  {{#if sub}}<div class="entry-sub">{{sub}}</div>{{/if}}
+  <ul>
+    {{#each bullets}}<li>{{this}}</li>
+    {{/each}}
+  </ul>
+</div>
+{{/each}}
+{{/if}}
+
+{{#if experience.length}}
+<h2>Experience</h2>
+{{#each experience}}
+<div class="entry">
+  <div class="entry-head">
+    <span class="entry-title">{{title}}{{#if org}}<span class="entry-org"> — {{org}}</span>{{/if}}</span>
+    {{#if meta}}<span class="entry-meta">{{meta}}</span>{{/if}}
+  </div>
+  {{#if sub}}<div class="entry-sub">{{sub}}</div>{{/if}}
+  <ul>
+    {{#each bullets}}<li>{{this}}</li>
+    {{/each}}
+  </ul>
+</div>
+{{/each}}
+{{/if}}
+
+{{#if skills.length}}
+<h2>Skills</h2>
+{{#each skills}}
+<div class="skills-row"><b>{{label}}</b>{{items}}</div>
+{{/each}}
+{{/if}}
+
+{{#if certifications.length}}
+<h2>Certifications</h2>
+{{#each certifications}}
+<div class="entry">
+  <div class="entry-head">
+    <span class="entry-title">{{name}}{{#if issuer}}<span class="entry-org"> — {{issuer}}</span>{{/if}}</span>
+    {{#if meta}}<span class="entry-meta">{{meta}}</span>{{/if}}
+  </div>
+</div>
+{{/each}}
+{{/if}}
+
+<div class="two-col">
+  <div>
+    {{#if education.length}}
+    <h2>Education</h2>
+    {{#each education}}
+    <div class="entry">
+      <div class="entry-head">
+        <span class="entry-title">{{degree}}</span>
+        {{#if meta}}<span class="entry-meta">{{meta}}</span>{{/if}}
+      </div>
+      <div class="entry-sub">{{institution}}</div>
+      {{#if note}}<div class="entry-sub">{{note}}</div>{{/if}}
+    </div>
+    {{/each}}
+    {{/if}}
+  </div>
+  <div>
+    {{#if languages.length}}
+    <h2>Languages</h2>
+    {{#each languages}}
+    <div class="skills-row"><b>{{language}}</b>{{level}}</div>
+    {{/each}}
+    {{/if}}
+  </div>
+</div>
+
+</body>
+</html>
