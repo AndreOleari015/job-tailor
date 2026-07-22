@@ -10,7 +10,7 @@
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" />
   <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A522-339933?logo=nodedotjs&logoColor=white" />
   <img alt="Providers" src="https://img.shields.io/badge/LLM-Gemini%20%7C%20Claude-8A2BE2" />
-  <img alt="Tests" src="https://img.shields.io/badge/tests-379%20passing-success" />
+  <img alt="Tests" src="https://img.shields.io/badge/tests-390%20passing-success" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue" />
 </p>
 
@@ -516,10 +516,29 @@ A `Company: X` line anywhere in the input wins over whatever the model infers �
 deterministic rule, so it is enforced in code rather than only asked for in the prompt. When no
 company can be found, the CLI says so on stderr instead of silently producing a generic opening.
 
-### Flag, never silently repair
+### Flag, and give the model one chance to fix it
 
 Every check that touches a factual claim raises a flag and prints the offending text to stderr.
-None of them edit the letter.
+None of them edit the letter — but when a reconciled application still carries a **blocking** flag,
+the model is asked, once, to fix it, and the same checks judge the result.
+
+This stays inside the rule that the model may not write facts unchecked. The instruction only ever
+says *what to remove* — "the letter uses 'data engineering concepts' from the posting, but no
+selected bullet backs that up; remove the claim" — never what to write. The rewrite comes from the
+model; `reconcile()` then judges it exactly as it judged the first attempt. A repair that does not
+clear the flag is **accepted and flagged**, never forced through, so the guarantee is unchanged:
+nothing reaches a PDF that would not have passed on the first try.
+
+It is deliberately **one** attempt. Each retry is another chance for the model to find wording that
+slips past a keyword check without being any truer, so the budget is bounded and the repair is
+announced on stderr — "asked the model to fix a factual flag; the re-check now passes" — so a
+clean result is never mistaken for one that needed no correction. `JOB_TAILOR` note: pass
+`maxSemanticRepairs: 0` to `tailorApplication` to turn it off entirely.
+
+The machinery is the schema-repair loop that already existed in `callJson`, extended with a
+`validate` hook that runs after the schema passes: a well-formed but wrong response is sent back
+with the instruction, on a budget separate from and smaller than the schema retries. A schema
+failure is fatal once exhausted; a semantic one is not.
 
 That is deliberate. A cover letter is a document you sign and send; code that quietly rewrites
 its factual content would be making claims on your behalf that you never read. The same run
@@ -976,7 +995,7 @@ npm test          # tsc, then vitest
 npm run test:watch
 ```
 
-379 tests. All but one make no network call and drive no browser. They cover the zod schemas
+390 tests. All but one make no network call and drive no browser. They cover the zod schemas
 against valid and malformed fixtures, the `callJson` retry loop against mocked SDKs, provider and
 per-task model resolution, the `ConfigError` for each provider's missing key, Gemini's backoff
 and quota handling, the JSON Schema conversion, the `DEBUG=1` transcript (written when set,

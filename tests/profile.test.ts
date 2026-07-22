@@ -5,7 +5,14 @@ import {fileURLToPath} from "node:url";
 import {afterEach, describe, expect, it, vi} from "vitest";
 import {resetCountriesCache} from "../src/config.js";
 import {companyFromHeader, extractJobSpec} from "../src/core/extract.js";
-import {applyMinScore, computeFlags, loadProfile, reconcile} from "../src/core/tailor.js";
+import {
+    applyMinScore,
+    computeFlags,
+    loadProfile,
+    reconcile,
+    repairInstruction,
+    tailorApplication,
+} from "../src/core/tailor.js";
 import type {LlmProvider} from "../src/llm/providers/index.js";
 import {collectBulletIds, flags, type JobSpec, type TailoredApplication} from "../src/types.js";
 
@@ -654,5 +661,122 @@ describe("cover_letter_bullet_refs", () => {
             jobSpec,
         );
         expect(result.flags).not.toContain(flags.coverLetterRefMismatch);
+    });
+});
+
+/* ------------------------------------------------------------------ */
+/* Semantic repair: ask the model to fix a factual flag, once          */
+/* ------------------------------------------------------------------ */
+
+/** A provider that replays a different response on each call. */
+function scriptedProvider(...responses: object[]): LlmProvider {
+    let call = 0;
+    return {
+        name: "anthropic",
+        model: "test",
+        supportsNativeJsonSchema: false,
+        complete: async () => ({text: JSON.stringify(responses[Math.min(call++, responses.length - 1)])}),
+    };
+}
+
+describe("repairInstruction", () => {
+    it("returns null for a clean application", async () => {
+        const profile = await loadProfile(profilePath);
+        expect(repairInstruction(application, profile, jobSpec)).toBeNull();
+    });
+
+    it("names the unsupported term the letter must drop", async () => {
+        const profile = await loadProfile(profilePath);
+        const instruction = repairInstruction(
+            {...application, cover_letter: paragraphed("I have used MongoDB in production.")},
+            profile,
+            {...jobSpec, required_stack: ["MongoDB"]},
+        );
+        expect(instruction).toContain("MongoDB");
+        // It says what to remove, never what to write.
+        expect(instruction).toMatch(/remove|state only/i);
+    });
+
+    it("describes an inapplicable work-authorisation claim", async () => {
+        const profile = await loadProfile(profilePath);
+        const claim = "Something specific. I am eligible for an EU Blue Card under section 18g AufenthG.";
+        const instruction = repairInstruction(
+            {...application, cover_letter: claim},
+            profile,
+            {...jobSpec, country: "IE"},
+        );
+        expect(instruction).toMatch(/visas, permits or residence/i);
+    });
+});
+
+describe("tailorApplication semantic repair", () => {
+    const clean = {
+        ...application,
+        cover_letter: paragraphed("At Polar Labs I shipped 30+ applications to both stores."),
+    };
+    const withClaim = {
+        ...application,
+        cover_letter: paragraphed("I have deep MongoDB experience across many projects."),
+    };
+    const spec = {...jobSpec, required_stack: ["MongoDB"]};
+
+    it("asks the model to fix a blocking flag and accepts the clean retry", async () => {
+        const profile = await loadProfile(profilePath);
+        vi.spyOn(process.stderr, "write").mockReturnValue(true);
+
+        const provider = scriptedProvider(withClaim, clean);
+        const result = await tailorApplication(profile, spec, {provider});
+
+        expect(result.flags).not.toContain(flags.unsupportedTechClaim);
+        expect(result.cover_letter).not.toMatch(/mongodb/i);
+    });
+
+    it("flags it, not throws, when the retry still fails", async () => {
+        const profile = await loadProfile(profilePath);
+        const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+
+        // The model doubles down: both attempts carry the unbacked claim.
+        const provider = scriptedProvider(withClaim, withClaim);
+        const result = await tailorApplication(profile, spec, {provider});
+
+        expect(result.flags).toContain(flags.unsupportedTechClaim);
+        const logged = stderr.mock.calls.map(([c]) => String(c)).join("");
+        expect(logged).toContain("still carries");
+    });
+
+    it("does not retry a clean first answer", async () => {
+        const profile = await loadProfile(profilePath);
+        let calls = 0;
+        const provider: LlmProvider = {
+            name: "anthropic",
+            model: "test",
+            supportsNativeJsonSchema: false,
+            complete: async () => {
+                calls += 1;
+                return {text: JSON.stringify(clean)};
+            },
+        };
+
+        await tailorApplication(profile, spec, {provider});
+        expect(calls).toBe(1);
+    });
+
+    it("makes only one repair attempt", async () => {
+        const profile = await loadProfile(profilePath);
+        vi.spyOn(process.stderr, "write").mockReturnValue(true);
+        let calls = 0;
+        const provider: LlmProvider = {
+            name: "anthropic",
+            model: "test",
+            supportsNativeJsonSchema: false,
+            complete: async () => {
+                calls += 1;
+                return {text: JSON.stringify(withClaim)};
+            },
+        };
+
+        await tailorApplication(profile, spec, {provider});
+        // First attempt plus exactly one repair, never a third.
+        expect(calls).toBe(2);
     });
 });

@@ -41,6 +41,16 @@ export interface CallJsonOptions<T> {
     schema: ZodType<T>;
     /** Repair attempts after the first failure. Defaults to JOB_TAILOR_MAX_RETRIES (2). */
     maxRetries?: number;
+    /**
+     * A check run after schema validation passes, for a response that is
+     * well-formed but wrong. Returns an instruction to send the model, or null
+     * to accept. Its budget is separate from and smaller than the schema
+     * retries: a semantic failure is not fatal, so when the budget runs out the
+     * value is accepted anyway and the caller decides what to do with it.
+     */
+    validate?: (value: T) => string | null;
+    /** Semantic repair attempts. 0 disables the `validate` retry entirely. */
+    maxSemanticRepairs?: number;
     /** Selects the per-task model override. */
     task?: Task;
     /** Fully injected provider; skips environment resolution. */
@@ -221,8 +231,13 @@ export async function callJson<T>(options: CallJsonOptions<T>): Promise<T> {
     let validationError = "no attempt was made";
     let lastResponse = "";
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        await transcript?.request(attempt + 1, {
+    // Two independent budgets. Schema failures are fatal once exhausted; a
+    // semantic failure is not — the value is returned and the caller flags it.
+    let schemaRetriesLeft = maxRetries;
+    let semanticRepairsLeft = options.maxSemanticRepairs ?? 0;
+
+    for (let attempt = 1; ; attempt++) {
+        await transcript?.request(attempt, {
             provider: provider.name,
             model: provider.model,
             system: options.system,
@@ -238,23 +253,39 @@ export async function callJson<T>(options: CallJsonOptions<T>): Promise<T> {
             ...(jsonSchema ? {jsonSchema} : {}),
         });
 
-        logUsage(provider, response, attempt);
+        logUsage(provider, response, attempt - 1);
         lastResponse = response.text;
-        await transcript?.response(attempt + 1, lastResponse);
+        await transcript?.response(attempt, lastResponse);
 
         const parsed = parseJson(lastResponse);
-        if (parsed.ok) {
-            const result = options.schema.safeParse(parsed.value);
-            if (result.success) return result.data;
-            validationError = describeIssues(result.error);
-        } else {
-            validationError = parsed.error;
+        const validated = parsed.ok ? options.schema.safeParse(parsed.value) : undefined;
+        if (!validated?.success) {
+            validationError = parsed.ok ? describeIssues(validated!.error) : parsed.error;
+            if (schemaRetriesLeft <= 0) {
+                throw new LlmValidationError({attempts: attempt, validationError, lastResponse});
+            }
+            schemaRetriesLeft -= 1;
+            await transcript?.error(attempt, validationError);
+            history.push({role: "assistant", text: lastResponse || "(empty response)"});
+            history.push({role: "user", text: repairMessage(validationError)});
+            continue;
         }
 
-        await transcript?.error(attempt + 1, validationError);
-        history.push({role: "assistant", text: lastResponse || "(empty response)"});
-        history.push({role: "user", text: repairMessage(validationError)});
-    }
+        const value = validated.data;
 
-    throw new LlmValidationError({attempts: maxRetries + 1, validationError, lastResponse});
+        // Well-formed but wrong: send the caller's instruction and try once
+        // more, within the semantic budget. Out of budget, accept it — the
+        // check that raised it will raise it again downstream, where a human
+        // sees the flag.
+        const instruction = options.validate?.(value) ?? null;
+        if (instruction && semanticRepairsLeft > 0) {
+            semanticRepairsLeft -= 1;
+            await transcript?.error(attempt, instruction);
+            history.push({role: "assistant", text: lastResponse});
+            history.push({role: "user", text: instruction});
+            continue;
+        }
+
+        return value;
+    }
 }

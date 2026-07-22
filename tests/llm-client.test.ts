@@ -192,3 +192,86 @@ describe("debug transcript", () => {
         expect(await readdir(root)).toEqual([]);
     });
 });
+
+describe("callJson semantic repair", () => {
+    it("sends the instruction and accepts the corrected response", async () => {
+        const {client, create} = fakeClient(
+            '{"company":"Acme","score":10}',
+            '{"company":"Acme","score":80}',
+        );
+
+        const result = await callJson({
+            system: "s",
+            user: "u",
+            schema,
+            client,
+            maxSemanticRepairs: 1,
+            validate: (v) => (v.score < 50 ? "score too low, raise it" : null),
+        });
+
+        expect(result.score).toBe(80);
+        expect(create).toHaveBeenCalledTimes(2);
+        // The instruction, not a schema error, is what the model was sent.
+        const repair = create.mock.calls[1]?.[0] as {messages: Anthropic.MessageParam[]};
+        expect(repair.messages[2]?.content).toContain("score too low");
+    });
+
+    it("accepts a still-wrong response once the budget runs out, without throwing", async () => {
+        const {client, create} = fakeClient(
+            '{"company":"Acme","score":10}',
+            '{"company":"Acme","score":20}',
+        );
+
+        // A semantic failure is not fatal: the caller flags it downstream.
+        const result = await callJson({
+            system: "s",
+            user: "u",
+            schema,
+            client,
+            maxSemanticRepairs: 1,
+            validate: (v) => (v.score < 50 ? "still too low" : null),
+        });
+
+        expect(result.score).toBe(20);
+        expect(create).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not retry when maxSemanticRepairs is 0", async () => {
+        const {client, create} = fakeClient('{"company":"Acme","score":10}');
+
+        const result = await callJson({
+            system: "s",
+            user: "u",
+            schema,
+            client,
+            maxSemanticRepairs: 0,
+            validate: () => "always unhappy",
+        });
+
+        expect(result.score).toBe(10);
+        expect(create).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the schema budget separate from the semantic one", async () => {
+        // A schema failure, then a semantic failure, then a clean answer: three
+        // calls, because the two budgets do not share.
+        const {client, create} = fakeClient(
+            "not json at all",
+            '{"company":"Acme","score":10}',
+            '{"company":"Acme","score":90}',
+        );
+
+        const result = await callJson({
+            system: "s",
+            user: "u",
+            schema,
+            client,
+            maxRetries: 2,
+            maxSemanticRepairs: 1,
+            validate: (v) => (v.score < 50 ? "raise it" : null),
+        });
+
+        expect(result.score).toBe(90);
+        expect(create).toHaveBeenCalledTimes(3);
+    });
+});

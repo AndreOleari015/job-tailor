@@ -21,7 +21,17 @@ export interface TailorOptions {
     client?: Anthropic;
     model?: string;
     maxRetries?: number;
+    /** Semantic repair attempts for a blocking flag. Defaults to 1; 0 disables it. */
+    maxSemanticRepairs?: number;
 }
+
+/** Flags whose presence stops the renderer producing a PDF (mirrors core/flags.ts). */
+const BLOCKING_FLAGS: ReadonlySet<string> = new Set([
+    flags.unexpectedAuthorisationClaim,
+    flags.coverLetterRefMismatch,
+    flags.unsupportedTechClaim,
+    flags.invalidBulletIdsDropped,
+]);
 
 /** True when a profile still carries the pre-3.6 `basics.work_authorisation` map. */
 function hasLegacyWorkAuthorisation(parsed: unknown): boolean {
@@ -154,8 +164,32 @@ function authorisationSentence(letter: string): string | undefined {
     return undefined;
 }
 
-function warn(message: string): void {
+function warnToStderr(message: string): void {
     process.stderr.write(`[job-tailor] ${message}\n`);
+}
+
+/**
+ * Requirement terms the letter uses that nothing in the selected bullets or the
+ * skills map backs — the job's own vocabulary leaking in unsupported. Shared by
+ * `reconcile` (which flags it) and `repairInstruction` (which asks the model to
+ * remove it), so the two can never disagree about what is offending.
+ */
+function unsupportedTerms(
+    application: TailoredApplication,
+    profile: Profile,
+    jobSpec: JobSpec,
+): string[] {
+    const bullets = collectBullets(profile);
+    const supporting = [
+        ...application.selected_bullet_ids
+            .filter((id) => bullets.has(id))
+            .map((id) => bullets.get(id)?.text ?? ""),
+        ...collectSkills(profile),
+    ].join(" ");
+
+    return [...new Set([...jobSpec.required_stack, ...jobSpec.nice_to_have])].filter(
+        (term) => mentions(application.cover_letter, term) && !mentions(supporting, term),
+    );
 }
 
 /**
@@ -171,7 +205,12 @@ export function reconcile(
     application: TailoredApplication,
     profile: Profile,
     jobSpec: JobSpec,
+    options: {silent?: boolean} = {},
 ): TailoredApplication {
+    // Silent when a repair pass is only asking "does this still fail?" — the
+    // final reconcile, on the letter that is kept, does the logging.
+    const warn = options.silent ? () => {} : warnToStderr;
+
     const bullets = collectBullets(profile);
     const known = new Set(bullets.keys());
     const letter = application.cover_letter;
@@ -214,13 +253,7 @@ export function reconcile(
     // A requirement term may only reach the letter if something in the profile
     // backs it. Catches the job's own vocabulary leaking in unsupported — the
     // common shape of a re-characterisation, not a semantic check.
-    const supporting = [
-        ...selected.map((id) => bullets.get(id)?.text ?? ""),
-        ...collectSkills(profile),
-    ].join(" ");
-    const unsupported = [
-        ...new Set([...jobSpec.required_stack, ...jobSpec.nice_to_have]),
-    ].filter((term) => mentions(letter, term) && !mentions(supporting, term));
+    const unsupported = unsupportedTerms({...application, selected_bullet_ids: selected}, profile, jobSpec);
     if (unsupported.length) {
         merged.add(flags.unsupportedTechClaim);
         warn(
@@ -271,6 +304,63 @@ export function reconcile(
 }
 
 /**
+ * The instruction sent back to the model when a reconciled letter still carries
+ * a blocking flag, or null when it is clean.
+ *
+ * This is the one place code speaks to the model about the *content* of the
+ * letter, and it stays within the project's rule: it never says what to write,
+ * only what to remove. The model rewrites; the same `reconcile` then judges the
+ * result exactly as it judged the first attempt. A repair that does not clear
+ * the flag is accepted and flagged, never forced through.
+ */
+export function repairInstruction(
+    application: TailoredApplication,
+    profile: Profile,
+    jobSpec: JobSpec,
+): string | null {
+    const reconciled = reconcile(application, profile, jobSpec, {silent: true});
+    const problems: string[] = [];
+
+    const unsupported = unsupportedTerms(reconciled, profile, jobSpec);
+    if (unsupported.length) {
+        problems.push(
+            `The letter uses ${unsupported.map((t) => `"${t}"`).join(", ")} from the job posting, ` +
+                "but no selected bullet and no listed skill backs that up. Remove the claim, or " +
+                "state only what the selected bullets actually describe. Do not substitute an " +
+                "adjacent technology and do not re-characterise existing work to fit the term.",
+        );
+    }
+
+    if (reconciled.flags.includes(flags.unexpectedAuthorisationClaim)) {
+        const claim = authorisationSentence(reconciled.cover_letter);
+        problems.push(
+            `The letter makes a work-authorisation claim that does not apply to ` +
+                `${jobSpec.country ?? "this posting's country"}${claim ? `: "${claim}"` : ""}. ` +
+                "Remove any mention of visas, permits or residence status entirely.",
+        );
+    }
+
+    const badRefs = reconciled.cover_letter_bullet_refs.filter(
+        (id) => !reconciled.selected_bullet_ids.includes(id),
+    );
+    if (badRefs.length) {
+        problems.push(
+            "The letter draws on facts from bullets that were not selected. Use only the facts " +
+                "in the selected bullets, and cite only those in cover_letter_bullet_refs.",
+        );
+    }
+
+    if (!problems.length) return null;
+
+    return (
+        "The application you returned fails a factual check and cannot be used as written. " +
+        "Fix the cover_letter and the fields around it, changing nothing else:\n" +
+        problems.map((p, i) => `${i + 1}. ${p}`).join("\n") +
+        "\nReturn the corrected application as the same JSON object."
+    );
+}
+
+/**
  * Below the threshold the letter is not worth the candidate's attention, but
  * the gaps are exactly what they need in order to move on. Keep those, drop
  * the letter. `force` bypasses the check entirely.
@@ -294,12 +384,37 @@ export async function tailorApplication(
     options: TailorOptions = {},
 ): Promise<TailoredApplication> {
     const {system, user} = tailoringPrompt(profile, jobSpec);
+
+    // Whether the model was asked to fix a factual flag before we accepted its
+    // answer. Reported so a clean-looking result is never mistaken for one that
+    // needed no correction.
+    let repairAsked = false;
+
     const application = await callJson({
         system,
         user,
         schema: tailoredApplicationSchema,
         task: "tailor",
+        // One pass, no more: each retry is another chance for the model to find
+        // wording that slips past a keyword check without being any truer. The
+        // instruction only ever says what to remove.
+        maxSemanticRepairs: options.maxSemanticRepairs ?? 1,
+        validate: (candidate) => {
+            const instruction = repairInstruction(candidate, profile, jobSpec);
+            if (instruction) repairAsked = true;
+            return instruction;
+        },
         ...options,
     });
-    return reconcile(application, profile, jobSpec);
+
+    const reconciled = reconcile(application, profile, jobSpec);
+    if (repairAsked) {
+        const blocking = reconciled.flags.filter((flag) => BLOCKING_FLAGS.has(flag));
+        warnToStderr(
+            blocking.length
+                ? `asked the model to fix a factual flag; it still carries ${blocking.join(", ")} — read the letter`
+                : "asked the model to fix a factual flag; the re-check now passes",
+        );
+    }
+    return reconciled;
 }
