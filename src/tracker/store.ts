@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import {mkdirSync, readFileSync} from "node:fs";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
+import {detectLanguage} from "../sources/language.js";
 
 export const DEFAULT_DATABASE_PATH = "data/tracker.db";
 
@@ -117,6 +118,8 @@ export interface ListFilter {
     status?: string;
     country?: string;
     source?: string;
+    /** "de" | "en" | "unknown", as detected in the sources layer. */
+    language?: string;
     /** Substring match over company and title. */
     q?: string;
 }
@@ -231,6 +234,31 @@ function migrate(db: Database.Database): void {
     for (const column of ADDED_COLUMNS) {
         if (!present.has(column.name)) db.exec(column.ddl);
     }
+    backfillLanguage(db);
+}
+
+/**
+ * Rows stored before the language column existed have none, which makes them
+ * invisible to a language filter — NULL is not "unknown", it is "never asked".
+ * Detection is deterministic and reads text already on disk, so the answer is
+ * the same one the sources layer would have given at the time.
+ */
+function backfillLanguage(db: Database.Database): void {
+    const rows = db
+        .prepare("SELECT source_id, title, raw_text FROM postings WHERE language IS NULL")
+        .all() as {source_id: string; title: string | null; raw_text: string | null}[];
+    if (!rows.length) return;
+
+    const update = db.prepare("UPDATE postings SET language = ? WHERE source_id = ?");
+    const run = db.transaction(() => {
+        for (const row of rows) {
+            // Nothing to read is not a language. Leave it null rather than
+            // recording a guess drawn from an empty string.
+            if (!row.raw_text?.trim()) continue;
+            update.run(detectLanguage(row.raw_text, row.title ?? ""), row.source_id);
+        }
+    });
+    run();
 }
 
 export class TrackerStore {
@@ -332,6 +360,10 @@ export class TrackerStore {
         if (filter.source) {
             where.push("source = @source");
             params["source"] = filter.source;
+        }
+        if (filter.language) {
+            where.push("language = @language");
+            params["language"] = filter.language;
         }
         if (filter.q?.trim()) {
             where.push("(company LIKE @q OR title LIKE @q)");

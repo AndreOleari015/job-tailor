@@ -2,7 +2,12 @@ import type {FastifyInstance} from "fastify";
 import {createReadStream} from "node:fs";
 import {readdir, stat} from "node:fs/promises";
 import path from "node:path";
-import {loadCompanies, type ScoredPosting} from "../sources/index.js";
+import {
+    isPostingLanguage,
+    loadCompanies,
+    type PostingLanguage,
+    type ScoredPosting,
+} from "../sources/index.js";
 import {isOutcome, isStatus, TrackerError} from "../tracker/store.js";
 import {
     generateForPosting,
@@ -15,6 +20,8 @@ import type {GenerationQueue} from "./queue.js";
 interface SearchBody {
     keywords?: string[];
     country?: string;
+    /** One code, or several. "any" is expressed by leaving it out. */
+    language?: string | string[];
     location?: string;
     remote?: boolean;
     postedWithinDays?: number;
@@ -63,13 +70,22 @@ export function registerRoutes(
         };
     });
 
-    app.get<{Querystring: {status?: string; country?: string; source?: string; q?: string}}>(
+    app.get<{
+        Querystring: {
+            status?: string;
+            country?: string;
+            language?: string;
+            source?: string;
+            q?: string;
+        };
+    }>(
         "/api/postings",
         async (request) => {
-            const {status, country, source, q} = request.query;
+            const {status, country, language, source, q} = request.query;
             return store.listPostings({
                 ...(status ? {status} : {}),
                 ...(country ? {country} : {}),
+                ...(language ? {language} : {}),
                 ...(source ? {source} : {}),
                 ...(q ? {q} : {}),
             });
@@ -87,12 +103,19 @@ export function registerRoutes(
         const body = request.body ?? {};
         const profile = await context.pipeline.loadProfile(context.profilePath);
 
+        // An unrecognised code filters nothing rather than silently emptying
+        // the result — the same rule the CLI applies to an unknown --language.
+        const languages = [body.language ?? []]
+            .flat()
+            .filter((code): code is PostingLanguage => isPostingLanguage(code));
+
         const result = await context.pipeline.search({
             query: {
                 keywords: body.keywords ?? [],
                 ...(body.location ? {location: body.location} : {}),
                 ...(body.country ? {country: body.country} : {}),
                 ...(body.remote ? {remote: true} : {}),
+                ...(languages.length ? {languages} : {}),
                 ...(body.postedWithinDays ? {postedWithinDays: body.postedWithinDays} : {}),
             },
             profile,

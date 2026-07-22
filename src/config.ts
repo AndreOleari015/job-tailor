@@ -96,6 +96,11 @@ export function readOutputDir(): string {
     return env("JOB_TAILOR_OUTPUT_DIR") ?? DEFAULT_OUTPUT_DIR;
 }
 
+/** The port `serve` listens on. The --port flag still wins over it. */
+export function readPort(fallback: number): number {
+    return readInt("JOB_TAILOR_PORT", fallback);
+}
+
 /* ------------------------------------------------------------------ */
 /* Country profiles                                                     */
 /* ------------------------------------------------------------------ */

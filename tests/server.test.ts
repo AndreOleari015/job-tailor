@@ -539,3 +539,74 @@ describe("reading a skipped application from disk", () => {
         store.close();
     });
 });
+
+describe("GET /api/postings?language", () => {
+    async function seeded() {
+        const harnessed = await harness();
+        harnessed.store.upsertPostings([
+            posting({sourceId: "de-1", title: "Softwareentwickler", language: "de"}),
+            posting({sourceId: "en-1", title: "Software Engineer", language: "en"}),
+            posting({sourceId: "un-1", title: "Engineer", language: "unknown"}),
+        ]);
+        return harnessed;
+    }
+
+    it("filters the list by the detected language", async () => {
+        const {app} = await seeded();
+        const response = await app.inject({method: "GET", url: "/api/postings?language=en"});
+
+        expect(response.statusCode).toBe(200);
+        expect(response.json().map((row: {sourceId: string}) => row.sourceId)).toEqual(["en-1"]);
+    });
+
+    it("returns everything when the parameter is absent", async () => {
+        const {app} = await seeded();
+        const response = await app.inject({method: "GET", url: "/api/postings"});
+        expect(response.json()).toHaveLength(3);
+    });
+
+    it("combines with the status filter", async () => {
+        const {app} = await seeded();
+        const response = await app.inject({
+            method: "GET",
+            url: "/api/postings?language=de&status=applied",
+        });
+        expect(response.json()).toEqual([]);
+    });
+});
+
+describe("POST /api/search language", () => {
+    it("passes the language through to the sources layer", async () => {
+        let seen: unknown;
+        const {app} = await harness({
+            async search(options) {
+                seen = options.query.languages;
+                return {postings: [], warnings: [], languages: {de: 0, en: 0, unknown: 0}};
+            },
+        });
+
+        await app.inject({
+            method: "POST",
+            url: "/api/search",
+            payload: {keywords: ["react"], language: "en"},
+        });
+        expect(seen).toEqual(["en"]);
+    });
+
+    it("ignores a language it does not recognise rather than emptying the search", async () => {
+        let seen: unknown = "untouched";
+        const {app} = await harness({
+            async search(options) {
+                seen = options.query.languages;
+                return {postings: [], warnings: [], languages: {de: 0, en: 0, unknown: 0}};
+            },
+        });
+
+        await app.inject({
+            method: "POST",
+            url: "/api/search",
+            payload: {keywords: ["react"], language: "klingon"},
+        });
+        expect(seen).toBeUndefined();
+    });
+});

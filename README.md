@@ -10,7 +10,7 @@
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" />
   <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A522-339933?logo=nodedotjs&logoColor=white" />
   <img alt="Providers" src="https://img.shields.io/badge/LLM-Gemini%20%7C%20Claude-8A2BE2" />
-  <img alt="Tests" src="https://img.shields.io/badge/tests-353%20passing-success" />
+  <img alt="Tests" src="https://img.shields.io/badge/tests-366%20passing-success" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue" />
 </p>
 
@@ -340,6 +340,7 @@ diff -r output/acme-*/            # compare the two cover letters
 | `JOB_TAILOR_DEFAULT_COUNTRY` | from the file     | Overrides `default:` in `countries.yaml`.            |
 | `JOB_TAILOR_CANDIDATES`    | `data/candidates.yaml` | Companies worth checking, by country.             |
 | `JOB_TAILOR_JOBS_DIR`      | `jobs`              | Where `pull` writes job files.                       |
+| `JOB_TAILOR_PORT`          | `4321`              | Port `serve` listens on; `--port` still wins.        |
 | `DEBUG`                    | —                   | `1` logs usage, writes transcripts, full traces.     |
 
 Model resolution per task is `JOB_TAILOR_{TASK}_MODEL` > `JOB_TAILOR_MODEL` > provider default,
@@ -607,6 +608,11 @@ Plain HTML, CSS and vanilla JS, served as static files. No framework, no bundler
 for the front end: this is a CLI with a UI attached, not a web app. Every string that reaches
 the DOM goes in as `textContent` — job descriptions are third-party text and are never parsed as
 HTML.
+
+The toolbar's **language** select filters the postings already in the tracker, not only the next
+search — it is the same question asked of rows you have. A posting stored before language
+detection existed is backfilled from its saved text when the database is opened, because a null
+language is "never asked", not "unknown", and it would otherwise be invisible to that filter.
 
 **Generation is queued, one at a time.** It costs a model call and takes tens of seconds, so the
 server serialises it and exposes what is running at `GET /api/status`; the page polls that every
@@ -941,7 +947,7 @@ npm test          # tsc, then vitest
 npm run test:watch
 ```
 
-353 tests. All but one make no network call and drive no browser. They cover the zod schemas
+366 tests. All but one make no network call and drive no browser. They cover the zod schemas
 against valid and malformed fixtures, the `callJson` retry loop against mocked SDKs, provider and
 per-task model resolution, the `ConfigError` for each provider's missing key, Gemini's backoff
 and quota handling, the JSON Schema conversion, the `DEBUG=1` transcript (written when set,

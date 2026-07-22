@@ -5,6 +5,10 @@
  */
 
 const SETTINGS_KEY = "job-tailor.search";
+
+/** What the language column prints. "unknown" means too little prose to tell. */
+const LANGUAGE_LABELS = {de: "German", en: "English", unknown: "—"};
+
 const POLL_MS = 2000;
 
 /** Flags that stop the renderer producing a PDF. Shown in the warning colour. */
@@ -63,6 +67,7 @@ function saveSettings() {
     const settings = {
         keywords: $("keywords").value,
         country: $("country").value,
+        language: $("language").value,
         location: $("location").value,
         sources: [...$("sources").selectedOptions].map((option) => option.value),
     };
@@ -78,6 +83,7 @@ function loadSettings() {
     }
     if (settings.keywords) $("keywords").value = settings.keywords;
     if (settings.country) $("country").value = settings.country;
+    if (settings.language) $("language").value = settings.language;
     if (settings.location) $("location").value = settings.location;
     for (const option of $("sources").options) {
         option.selected = (settings.sources || []).includes(option.value);
@@ -149,9 +155,10 @@ function buildRow(posting) {
     );
 
     const scores = el("div", "row-scores");
-    if (posting.preScore !== null && posting.preScore !== undefined) {
-        scores.append(el("span", "badge", `pre ${posting.preScore}`));
-    }
+    // An em dash, not a hidden badge: "not scored" is a different statement
+    // from "scored zero", and the list has to say which one it means.
+    const pre = posting.preScore === null || posting.preScore === undefined ? "—" : posting.preScore;
+    scores.append(el("span", "badge", `pre ${pre}`));
     if (posting.matchScore !== null && posting.matchScore !== undefined) {
         scores.append(el("span", "badge", `match ${posting.matchScore}`));
     }
@@ -162,6 +169,7 @@ function buildRow(posting) {
     meta.append(
         el("span", null, posting.location || "—"),
         el("span", null, posting.source || "—"),
+        el("span", "row-language", LANGUAGE_LABELS[posting.language] || "—"),
     );
     for (const flag of posting.flags) {
         meta.append(el("span", `badge${BLOCKING_FLAGS.has(flag) ? " is-blocking" : ""}`, flag));
@@ -172,8 +180,14 @@ function buildRow(posting) {
 }
 
 async function refreshList() {
-    const query = state.status ? `?status=${encodeURIComponent(state.status)}` : "";
-    state.postings = await api(`/api/postings${query}`);
+    const params = new URLSearchParams();
+    if (state.status) params.set("status", state.status);
+    // The toolbar's language choice filters the list too, not only the search:
+    // it is the same question asked of postings already in the database.
+    if ($("language").value) params.set("language", $("language").value);
+
+    const query = params.toString();
+    state.postings = await api(`/api/postings${query ? `?${query}` : ""}`);
 
     const list = $("list");
     clear(list);
@@ -484,6 +498,7 @@ async function runSearch(button) {
             body: {
                 keywords,
                 country: $("country").value || undefined,
+                language: $("language").value || undefined,
                 location: $("location").value || undefined,
                 sources: sources.length ? sources : undefined,
             },
@@ -545,6 +560,13 @@ function init() {
             await refreshList();
         });
     }
+
+    // Language narrows the list you are already looking at, not only the next
+    // search, so it has to redraw on change rather than waiting for Search.
+    $("language").addEventListener("change", async () => {
+        saveSettings();
+        await refreshList();
+    });
 
     $("list").addEventListener("click", (event) => {
         const row = event.target.closest(".row");

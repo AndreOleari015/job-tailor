@@ -1,3 +1,6 @@
+import {mkdtemp} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import path from "node:path";
 import {describe, expect, it} from "vitest";
 import {
     canTransition,
@@ -169,7 +172,7 @@ describe("listPostings ordering", () => {
             posting({sourceId: "high", title: "High", preScore: 90}),
         ]);
 
-        expect(db.listPostings().map((one) => one.sourceId)).toEqual(["high", "low", "none"]);
+        expect(db.listPostings().map((row) => row.sourceId)).toEqual(["high", "low", "none"]);
         db.close();
     });
 
@@ -181,7 +184,7 @@ describe("listPostings ordering", () => {
         ]);
         drive(db, "gen-low", "generated");
 
-        expect(db.listPostings().map((one) => one.sourceId)).toEqual(["gen-low", "new-high"]);
+        expect(db.listPostings().map((row) => row.sourceId)).toEqual(["gen-low", "new-high"]);
         db.close();
     });
 
@@ -192,8 +195,8 @@ describe("listPostings ordering", () => {
             posting({sourceId: "b", company: "Northwind", source: "lever"}),
         ]);
 
-        expect(db.listPostings({source: "lever"}).map((one) => one.sourceId)).toEqual(["b"]);
-        expect(db.listPostings({q: "meri"}).map((one) => one.sourceId)).toEqual(["a"]);
+        expect(db.listPostings({source: "lever"}).map((row) => row.sourceId)).toEqual(["b"]);
+        expect(db.listPostings({q: "meri"}).map((row) => row.sourceId)).toEqual(["a"]);
         expect(db.listPostings({status: "generated"})).toHaveLength(0);
         db.close();
     });
@@ -273,5 +276,105 @@ describe("recordFailure", () => {
         expect(failed.lastError).toBe("Gemini quota exhausted");
         expect(failed.notes).toBe("Referred by a friend.");
         db.close();
+    });
+});
+
+describe("filtering by language", () => {
+    /** Phase 3.8 detects the language; the tracker has to be able to ask for it. */
+    function seeded(): TrackerStore {
+        const db = store();
+        db.upsertPostings([
+            posting({sourceId: "de-1", title: "Softwareentwickler", language: "de"}),
+            posting({sourceId: "en-1", title: "Software Engineer", language: "en"}),
+            posting({sourceId: "un-1", title: "Engineer", language: "unknown"}),
+            posting({sourceId: "null-1", title: "Legacy row"}),
+        ]);
+        return db;
+    }
+
+    it("returns only the postings written in that language", () => {
+        const db = seeded();
+        expect(db.listPostings({language: "de"}).map((row) => row.sourceId)).toEqual(["de-1"]);
+        expect(db.listPostings({language: "en"}).map((row) => row.sourceId)).toEqual(["en-1"]);
+    });
+
+    it("treats undetected as a value you can filter on", () => {
+        expect(seeded().listPostings({language: "unknown"}).map((row) => row.sourceId)).toEqual([
+            "un-1",
+        ]);
+    });
+
+    it("returns everything when no language is asked for", () => {
+        expect(seeded().listPostings()).toHaveLength(4);
+    });
+
+    it("combines with the other filters", () => {
+        const db = seeded();
+        expect(db.listPostings({language: "de", status: "new"})).toHaveLength(1);
+        expect(db.listPostings({language: "de", status: "applied"})).toHaveLength(0);
+    });
+
+    it("stores the language it was given", () => {
+        expect(seeded().getPosting("de-1")?.language).toBe("de");
+        // A row upserted without one predates the column; null, not a guess.
+        expect(seeded().getPosting("null-1")?.language).toBeNull();
+    });
+});
+
+describe("the language backfill", () => {
+    const GERMAN =
+        "Wir suchen einen Entwickler für unser Team und bieten flexible Arbeitszeiten " +
+        "sowie die Möglichkeit, nach Absprache im Homeoffice zu arbeiten. Der Bewerber " +
+        "sollte über Erfahrung mit TypeScript verfügen und mit uns die Plattform bauen.";
+
+    /** A file-backed store, so it can be closed and opened again. */
+    async function onDisk(): Promise<string> {
+        const dir = await mkdtemp(path.join(tmpdir(), "job-tailor-tracker-"));
+        return path.join(dir, "tracker.db");
+    }
+
+    it("fills in a row that was stored before the column existed", async () => {
+        const file = await onDisk();
+
+        const first = openStore(file);
+        // No language on the upsert is exactly the pre-3.8 state: the text is
+        // there, the answer was never recorded.
+        first.upsertPostings([
+            posting({sourceId: "old-1", title: "Softwareentwickler (m/w/d)", text: GERMAN}),
+        ]);
+        expect(first.getPosting("old-1")?.language).toBeNull();
+        first.close();
+
+        const reopened = openStore(file);
+        expect(reopened.getPosting("old-1")?.language).toBe("de");
+        // And it is now reachable by the filter that could not see it before.
+        expect(reopened.listPostings({language: "de"})).toHaveLength(1);
+        reopened.close();
+    });
+
+    it("leaves a row with no stored text alone rather than guessing", async () => {
+        const file = await onDisk();
+
+        const first = openStore(file);
+        first.upsertPostings([posting({sourceId: "empty-1", text: "   "})]);
+        first.close();
+
+        const reopened = openStore(file);
+        expect(reopened.getPosting("empty-1")?.language).toBeNull();
+        reopened.close();
+    });
+
+    it("does not overwrite a language already recorded", async () => {
+        const file = await onDisk();
+
+        const first = openStore(file);
+        first.upsertPostings([
+            posting({sourceId: "kept-1", title: "Engineer", text: GERMAN, language: "en"}),
+        ]);
+        first.close();
+
+        const reopened = openStore(file);
+        expect(reopened.getPosting("kept-1")?.language).toBe("en");
+        reopened.close();
     });
 });

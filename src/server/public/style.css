@@ -162,6 +162,8 @@ button.primary { background: var(--accent); color: var(--accent-ink); border-col
 .row-company { font-weight: 600; }
 .row-title { color: var(--ink); }
 .row-meta { display: flex; gap: 10px; flex-wrap: wrap; color: var(--muted); font-size: 13px; }
+/* The language separates two populations of this market; worth reading at a glance. */
+.row-language { font-variant-caps: all-small-caps; letter-spacing: 0.4px; }
 .row-scores { margin-left: auto; display: flex; gap: 8px; font-variant-numeric: tabular-nums; }
 
 .pill {

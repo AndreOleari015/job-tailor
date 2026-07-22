@@ -19,6 +19,7 @@ import {
     loadCountries,
     readMinScore,
     readOutputDir,
+    readPort,
     readPreScoreMin,
     readProfilePath,
     resolveModel,
@@ -793,7 +794,7 @@ program
 program
     .command("serve")
     .description("Start the local web interface on 127.0.0.1.")
-    .option("--port <n>", "port to listen on", String(DEFAULT_PORT))
+    .option("--port <n>", "port to listen on", String(readPort(DEFAULT_PORT)))
     .option("--open", "open the browser at the served URL")
     .action(
         guarded(async (options: {port: string; open?: boolean}) => {
