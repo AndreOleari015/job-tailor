@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import {mkdirSync, readFileSync} from "node:fs";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
+import {identityKey, normaliseUrl} from "../core/dedupe.js";
 import {detectLanguage} from "../sources/language.js";
 
 export const DEFAULT_DATABASE_PATH = "data/tracker.db";
@@ -11,6 +12,7 @@ export const DEFAULT_DATABASE_PATH = "data/tracker.db";
 /* ------------------------------------------------------------------ */
 
 export const STATUSES = [
+    "lead",
     "new",
     "generating",
     "generated",
@@ -30,6 +32,10 @@ export type Outcome = (typeof OUTCOMES)[number];
  * illegal move fails with a sentence a human can act on.
  */
 const TRANSITIONS: Record<Status, readonly Status[]> = {
+    // A lead is a sighting from an email alert: company, title and a link, but
+    // no description yet. Pasting the description promotes it to `new`; there is
+    // nothing to generate from until then.
+    lead: ["new", "dismissed"],
     new: ["generating", "dismissed"],
     generating: ["generated", "failed"],
     failed: ["generating", "dismissed"],
@@ -94,6 +100,11 @@ export interface PostingRecord {
     preScore: number | null;
     rawText: string | null;
     language: string | null;
+    /** Set when the posting came from an email alert rather than a job source. */
+    leadSource: string | null;
+    emailId: string | null;
+    emailDate: string | null;
+    snippet: string | null;
     status: Status;
     /** The step a running generation is on. Null unless status is 'generating'. */
     stage: Stage | null;
@@ -123,6 +134,21 @@ export interface UpsertPosting {
     text: string;
     preScore?: number | null;
     language?: string | null;
+}
+
+/** A lead parsed from an email alert: a sighting, with no description yet. */
+export interface UpsertLead {
+    sourceId: string;
+    source: string;
+    company: string | null;
+    title: string;
+    location: string | null;
+    url: string;
+    fetchedAt: string;
+    leadSource: string;
+    emailId: string;
+    emailDate: string | null;
+    snippet: string | null;
 }
 
 export interface GenerationResult {
@@ -164,6 +190,10 @@ interface Row {
     pre_score: number | null;
     raw_text: string | null;
     language: string | null;
+    lead_source: string | null;
+    email_id: string | null;
+    email_date: string | null;
+    snippet: string | null;
     status: string;
     stage: string | null;
     stage_started_at: string | null;
@@ -202,6 +232,10 @@ function toRecord(row: Row): PostingRecord {
         preScore: row.pre_score,
         rawText: row.raw_text,
         language: row.language,
+        leadSource: row.lead_source,
+        emailId: row.email_id,
+        emailDate: row.email_date,
+        snippet: row.snippet,
         status: isStatus(row.status) ? row.status : "new",
         stage: row.stage && isStage(row.stage) ? row.stage : null,
         stageStartedAt: row.stage_started_at,
@@ -248,6 +282,10 @@ const ADDED_COLUMNS: readonly {name: string; ddl: string}[] = [
     {name: "language", ddl: "ALTER TABLE postings ADD COLUMN language TEXT"},
     {name: "stage", ddl: "ALTER TABLE postings ADD COLUMN stage TEXT"},
     {name: "stage_started_at", ddl: "ALTER TABLE postings ADD COLUMN stage_started_at TEXT"},
+    {name: "lead_source", ddl: "ALTER TABLE postings ADD COLUMN lead_source TEXT"},
+    {name: "email_id", ddl: "ALTER TABLE postings ADD COLUMN email_id TEXT"},
+    {name: "email_date", ddl: "ALTER TABLE postings ADD COLUMN email_date TEXT"},
+    {name: "snippet", ddl: "ALTER TABLE postings ADD COLUMN snippet TEXT"},
 ];
 
 function migrate(db: Database.Database): void {
@@ -409,6 +447,102 @@ export class TrackerStore {
             | Row
             | undefined;
         return row ? toRecord(row) : undefined;
+    }
+
+    /**
+     * What already exists, so a fetch does not create a second row for a job it
+     * has seen. `urls` and `identities` (company|title|location) are the two
+     * ways the same posting arrives twice; `emailIds` is so a message is never
+     * re-parsed.
+     */
+    dedupeIndex(): {urls: Set<string>; identities: Set<string>; emailIds: Set<string>} {
+        const urls = new Set<string>();
+        const identities = new Set<string>();
+        const emailIds = new Set<string>();
+
+        const rows = this.db
+            .prepare("SELECT url, company, title, location, email_id FROM postings")
+            .all() as Pick<Row, "url" | "company" | "title" | "location" | "email_id">[];
+
+        for (const row of rows) {
+            if (row.url) urls.add(normaliseUrl(row.url));
+            identities.add(identityKey(row.company, row.title, row.location));
+            if (row.email_id) emailIds.add(row.email_id);
+        }
+        return {urls, identities, emailIds};
+    }
+
+    /**
+     * Inserts email leads as status 'lead'. A lead has no raw_text — that is
+     * exactly what a lead is — so generation is refused until a description is
+     * pasted. An id already present is left untouched, never downgraded.
+     */
+    upsertLeads(leads: readonly UpsertLead[]): {found: number; added: number} {
+        const insert = this.db.prepare(`
+            INSERT INTO postings (
+                source_id, source, company, title, location, url,
+                fetched_at, lead_source, email_id, email_date, snippet, status, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'lead', ?)
+            ON CONFLICT(source_id) DO NOTHING
+        `);
+
+        const known = new Set(
+            this.db
+                .prepare("SELECT source_id FROM postings")
+                .all()
+                .map((row) => (row as {source_id: string}).source_id),
+        );
+
+        const now = this.now();
+        let added = 0;
+        const run = this.db.transaction((batch: readonly UpsertLead[]) => {
+            for (const lead of batch) {
+                if (known.has(lead.sourceId)) continue;
+                const info = insert.run(
+                    lead.sourceId,
+                    lead.source,
+                    lead.company,
+                    lead.title,
+                    lead.location,
+                    lead.url,
+                    lead.fetchedAt,
+                    lead.leadSource,
+                    lead.emailId,
+                    lead.emailDate,
+                    lead.snippet,
+                    now,
+                );
+                if (info.changes) added += 1;
+            }
+        });
+        run(leads);
+        return {found: leads.length, added};
+    }
+
+    /**
+     * Stores the pasted job description and promotes the lead to `new`. This is
+     * the step that turns a sighting into something generatable; nothing else
+     * writes raw_text onto a lead.
+     */
+    saveDescription(sourceId: string, text: string): PostingRecord {
+        const posting = this.require(sourceId);
+        if (!text.trim()) {
+            throw new TrackerError(`A pasted description for "${sourceId}" cannot be empty.`);
+        }
+        if (posting.status !== "lead") {
+            throw new TrackerError(
+                `"${sourceId}" is ${posting.status}, not a lead. Only a lead takes a pasted ` +
+                    "description.",
+            );
+        }
+
+        this.db
+            .prepare(
+                "UPDATE postings SET raw_text = ?, language = ?, status = 'new', updated_at = ? " +
+                    "WHERE source_id = ?",
+            )
+            .run(text, detectLanguage(text, posting.title ?? ""), this.now(), sourceId);
+        return this.require(sourceId);
     }
 
     /** Moves a posting through the state machine, refusing an illegal move. */

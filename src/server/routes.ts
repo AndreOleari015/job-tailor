@@ -9,6 +9,7 @@ import {
     type ScoredPosting,
 } from "../sources/index.js";
 import {FLAG_INFO} from "../core/flags.js";
+import {gmailStatus, runGmailFetch} from "./gmail.js";
 import {isOutcome, isStatus, TrackerError} from "../tracker/store.js";
 import {
     generateForPosting,
@@ -91,6 +92,32 @@ export function registerRoutes(
     // the page and the terminal can never disagree about what a flag means.
     app.get("/api/flags", async () => FLAG_INFO);
 
+    app.get("/api/gmail/status", async () => gmailStatus());
+
+    app.post<{Body: {sinceDays?: number; max?: number}}>(
+        "/api/gmail/fetch",
+        async (request, reply) => {
+            const body = request.body ?? {};
+            try {
+                const outcome = await runGmailFetch(store, {
+                    ...(body.sinceDays !== undefined ? {sinceDays: body.sinceDays} : {}),
+                    ...(body.max !== undefined ? {max: body.max} : {}),
+                });
+                return reply.send({
+                    added: outcome.added,
+                    leads: outcome.leads.length,
+                    messagesRead: outcome.messagesRead,
+                    unparsed: outcome.unparsed,
+                    label: outcome.label,
+                });
+            } catch (error) {
+                return reply
+                    .code(400)
+                    .send({error: error instanceof Error ? error.message : String(error)});
+            }
+        },
+    );
+
     app.get("/api/sources", async () => {
         const companies = await loadCompanies();
         return {
@@ -170,10 +197,35 @@ export function registerRoutes(
         return reply.send({...counts, warnings: result.warnings});
     });
 
+    // The paste step: a lead's missing description arrives here, is stored, and
+    // the lead becomes a `new` posting ready to generate. No model call.
+    app.post<{Params: {id: string}; Body: {description?: string}}>(
+        "/api/postings/:id/description",
+        async (request, reply) => {
+            const description = request.body?.description;
+            if (typeof description !== "string" || !description.trim()) {
+                return reply.code(400).send({error: "description must be a non-empty string."});
+            }
+            try {
+                return reply.send(store.saveDescription(request.params.id, description));
+            } catch (error) {
+                const code = error instanceof TrackerError ? 409 : 404;
+                return reply
+                    .code(code)
+                    .send({error: error instanceof Error ? error.message : String(error)});
+            }
+        },
+    );
+
     app.post<{Params: {id: string}}>("/api/postings/:id/generate", async (request, reply) => {
         const id = request.params.id;
         const posting = store.getPosting(id);
         if (!posting) return reply.code(404).send({error: "No such posting."});
+        if (posting.status === "lead") {
+            return reply.code(409).send({
+                error: "This is a lead with no job description yet. Paste the description first.",
+            });
+        }
         if (queue.isQueued(id)) return reply.code(409).send({error: "Already queued."});
 
         try {

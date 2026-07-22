@@ -262,6 +262,22 @@ export function readJobsDir(): string {
 }
 
 /* ------------------------------------------------------------------ */
+/* Gmail (phase 5)                                                      */
+/* ------------------------------------------------------------------ */
+
+export const GMAIL_CREDENTIALS_PATH = "data/gmail-credentials.json";
+export const GMAIL_TOKEN_PATH = "data/gmail-token.json";
+
+/**
+ * The one label every Gmail query is confined to. `gmail.readonly` is the
+ * narrowest scope Google offers and it still opens the whole mailbox, so the
+ * restriction lives here in code: nothing this tool reads is outside this label.
+ */
+export function readGmailLabel(): string {
+    return env("JOB_TAILOR_GMAIL_LABEL") ?? "job-alerts";
+}
+
+/* ------------------------------------------------------------------ */
 /* Provider selection                                                   */
 /* ------------------------------------------------------------------ */
 

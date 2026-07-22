@@ -51,6 +51,7 @@ const VALID: [Status, Status][] = [
 /** Walks a posting to `target` using only legal moves. */
 function drive(db: TrackerStore, id: string, target: Status): void {
     const routes: Record<Status, Status[]> = {
+        lead: [],
         new: [],
         generating: ["generating"],
         generated: ["generating", "generated"],
@@ -155,9 +156,12 @@ describe("status transitions", () => {
     });
 
     it("covers every status in the machine", () => {
+        // `new` and `lead` are entry points — a lead is created by an email
+        // fetch, not reached by a transition — so only they may be unreachable.
+        const entryPoints = ["new", "lead"];
         for (const status of STATUSES) {
             const reachable = STATUSES.some((other) => canTransition(other, status));
-            expect(status === "new" || reachable).toBe(true);
+            expect(entryPoints.includes(status) || reachable).toBe(true);
         }
     });
 });
@@ -480,5 +484,96 @@ describe("resetInterruptedGenerations", () => {
         db.upsertPostings([posting({sourceId: "a"})]);
         expect(db.resetInterruptedGenerations()).toBe(0);
         expect(db.getPosting("a")?.status).toBe("new");
+    });
+});
+
+describe("leads", () => {
+    function lead(over: Partial<import("../src/tracker/store.js").UpsertLead> & {sourceId: string}) {
+        return {
+            source: "gmail",
+            company: "Trade Republic",
+            title: "Senior React Native Engineer",
+            location: "Berlin, Germany",
+            url: "https://linkedin.com/jobs/view/1",
+            fetchedAt: "2026-07-20T00:00:00Z",
+            leadSource: "gmail:linkedin",
+            emailId: "m1",
+            emailDate: "2026-07-20T09:00:00Z",
+            snippet: "Actively recruiting",
+            ...over,
+        };
+    }
+
+    it("upserts a lead with status 'lead' and no raw text", () => {
+        const db = store();
+        expect(db.upsertLeads([lead({sourceId: "lead:1"})])).toEqual({found: 1, added: 1});
+
+        const stored = db.getPosting("lead:1");
+        expect(stored?.status).toBe("lead");
+        expect(stored?.rawText).toBeNull();
+        expect(stored?.leadSource).toBe("gmail:linkedin");
+        expect(stored?.snippet).toBe("Actively recruiting");
+        db.close();
+    });
+
+    it("creates one row when the same lead id arrives twice", () => {
+        const db = store();
+        db.upsertLeads([lead({sourceId: "lead:1"})]);
+        const second = db.upsertLeads([lead({sourceId: "lead:1", title: "Changed"})]);
+
+        expect(second.added).toBe(0);
+        // The existing lead is left as it was, never downgraded or rewritten.
+        expect(db.getPosting("lead:1")?.title).toBe("Senior React Native Engineer");
+        db.close();
+    });
+
+    it("never downgrades an existing posting to a lead", () => {
+        const db = store();
+        db.upsertPostings([posting({sourceId: "p1"})]);
+        drive(db, "p1", "applied");
+
+        db.upsertLeads([lead({sourceId: "p1"})]);
+        expect(db.getPosting("p1")?.status).toBe("applied");
+        db.close();
+    });
+
+    it("promotes a lead to 'new' when a description is pasted", () => {
+        const db = store();
+        db.upsertLeads([lead({sourceId: "lead:1"})]);
+
+        const description =
+            "We are hiring a React Native engineer. You will ship features across the app and the " +
+            "backend, and you will work with product and design. The role is permanent and can be " +
+            "done from the office or remotely after the first month.";
+        const promoted = db.saveDescription("lead:1", description);
+        expect(promoted.status).toBe("new");
+        expect(promoted.rawText).toContain("React Native");
+        expect(promoted.language).toBe("en");
+        db.close();
+    });
+
+    it("refuses a description on a posting that is not a lead", () => {
+        const db = store();
+        db.upsertPostings([posting({sourceId: "p1"})]);
+        expect(() => db.saveDescription("p1", "text")).toThrow(/not a lead/);
+        db.close();
+    });
+
+    it("refuses an empty description", () => {
+        const db = store();
+        db.upsertLeads([lead({sourceId: "lead:1"})]);
+        expect(() => db.saveDescription("lead:1", "   ")).toThrow(/cannot be empty/);
+        db.close();
+    });
+
+    it("exposes a dedupe index of urls, identities and email ids", () => {
+        const db = store();
+        db.upsertLeads([lead({sourceId: "lead:1"})]);
+
+        const index = db.dedupeIndex();
+        expect(index.urls.has("https://linkedin.com/jobs/view/1")).toBe(true);
+        expect(index.identities.has("trade republic|senior react native engineer|berlin, germany")).toBe(true);
+        expect(index.emailIds.has("m1")).toBe(true);
+        db.close();
     });
 });

@@ -23,6 +23,15 @@ CREATE TABLE IF NOT EXISTS postings (
     -- a detail of that status, never a status of its own.
     stage            TEXT,
     stage_started_at TEXT,
+    -- Where a lead came from ("gmail:linkedin"), the Gmail message it was parsed
+    -- from (for dedupe), and that message's date. Null for postings pulled from
+    -- a job source rather than an email alert. `snippet` is the short preview
+    -- from the alert; a lead has no raw_text, so this is all there is to show
+    -- until a description is pasted in.
+    lead_source      TEXT,
+    email_id         TEXT,
+    email_date       TEXT,
+    snippet          TEXT,
     status      TEXT NOT NULL DEFAULT 'new',
     out_dir     TEXT,
     match_score INTEGER,

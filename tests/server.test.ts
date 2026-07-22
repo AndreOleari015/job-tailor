@@ -747,3 +747,90 @@ describe("POST /api/postings/:id/cancel", () => {
         expect(response.statusCode).toBe(404);
     });
 });
+
+/* ------------------------------------------------------------------ */
+/* Phase 5: leads and the Gmail surface                                 */
+/* ------------------------------------------------------------------ */
+
+const lead = {
+    sourceId: "lead:1",
+    source: "gmail",
+    company: "Trade Republic",
+    title: "Senior React Native Engineer",
+    location: "Berlin, Germany",
+    url: "https://linkedin.com/jobs/view/1",
+    fetchedAt: "2026-07-20T00:00:00Z",
+    leadSource: "gmail:linkedin",
+    emailId: "m1",
+    emailDate: "2026-07-20T09:00:00Z",
+    snippet: "Actively recruiting",
+};
+
+describe("generating a lead", () => {
+    it("is refused with a message naming the missing description", async () => {
+        const {app, store, calls} = await harness();
+        store.upsertLeads([lead]);
+
+        const response = await app.inject({method: "POST", url: "/api/postings/lead:1/generate"});
+        expect(response.statusCode).toBe(409);
+        expect(response.json().error).toMatch(/paste the description/i);
+        // The model was never touched.
+        expect(calls.extract).toBe(0);
+        expect(calls.tailor).toBe(0);
+    });
+});
+
+describe("POST /api/postings/:id/description", () => {
+    it("stores the description and promotes the lead to new", async () => {
+        const {app, store} = await harness();
+        store.upsertLeads([lead]);
+
+        const response = await app.inject({
+            method: "POST",
+            url: "/api/postings/lead:1/description",
+            payload: {description: "We are hiring. You will build and ship features for the product team here."},
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.json().status).toBe("new");
+        expect(store.getPosting("lead:1")?.status).toBe("new");
+    });
+
+    it("rejects an empty description", async () => {
+        const {app, store} = await harness();
+        store.upsertLeads([lead]);
+
+        const response = await app.inject({
+            method: "POST",
+            url: "/api/postings/lead:1/description",
+            payload: {description: "   "},
+        });
+        expect(response.statusCode).toBe(400);
+    });
+
+    it("refuses a description on a posting that is not a lead", async () => {
+        const {app, store} = await harness();
+        store.upsertPostings([posting({sourceId: "p1"})]);
+
+        const response = await app.inject({
+            method: "POST",
+            url: "/api/postings/p1/description",
+            payload: {description: "some text"},
+        });
+        expect(response.statusCode).toBe(409);
+    });
+
+    it("then lets the promoted posting generate", async () => {
+        const {app, store, calls} = await harness();
+        store.upsertLeads([lead]);
+        await app.inject({
+            method: "POST",
+            url: "/api/postings/lead:1/description",
+            payload: {description: "We are hiring. You will build and ship features for the product team here."},
+        });
+
+        const response = await app.inject({method: "POST", url: "/api/postings/lead:1/generate"});
+        expect(response.statusCode).toBe(200);
+        expect(calls.tailor).toBe(1);
+    });
+});

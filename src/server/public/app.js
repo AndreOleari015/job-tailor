@@ -162,7 +162,7 @@ function loadSettings() {
 /* Stats                                                                */
 /* ------------------------------------------------------------------ */
 
-const STAT_ORDER = ["new", "generated", "applied", "failed", "dismissed", "closed"];
+const STAT_ORDER = ["lead", "new", "generated", "applied", "failed", "dismissed", "closed"];
 
 async function refreshStats() {
     const stats = await api("/api/stats");
@@ -236,10 +236,13 @@ function buildRow(posting) {
     );
 
     const scores = el("div", "row-scores");
-    // An em dash, not a hidden badge: "not scored" is a different statement
-    // from "scored zero", and the list has to say which one it means.
-    const pre = posting.preScore === null || posting.preScore === undefined ? "—" : posting.preScore;
-    scores.append(el("span", "badge", `pre ${pre}`));
+    // A lead has no description yet, so there is nothing to pre-score — the
+    // badge would be a meaningless em dash. For everything else "not scored" is
+    // a real statement, distinct from "scored zero", so the badge stays.
+    if (posting.status !== "lead") {
+        const pre = posting.preScore === null || posting.preScore === undefined ? "—" : posting.preScore;
+        scores.append(el("span", "badge", `pre ${pre}`));
+    }
     if (posting.matchScore !== null && posting.matchScore !== undefined) {
         scores.append(el("span", "badge", `match ${posting.matchScore}`));
     }
@@ -319,6 +322,14 @@ async function openDetail(id) {
         link.target = "_blank";
         link.rel = "noreferrer noopener";
         pane.append(link);
+    }
+
+    // A lead is a sighting from an email alert with no description. The one
+    // thing to do with it is paste that description, so the panel is built
+    // around that box and nothing competes with it.
+    if (posting.status === "lead") {
+        renderLeadPanel(pane, posting);
+        return;
     }
 
     /* Actions */
@@ -511,6 +522,75 @@ async function listFiles(id) {
     }
 }
 
+/**
+ * The lead panel. Its whole reason to exist is the paste box, so that is the
+ * dominant element: a disabled Generate makes the gate obvious, the snippet
+ * gives context, and the textarea is where the work happens.
+ */
+function renderLeadPanel(pane, posting) {
+    const actions = el("div", "detail-actions");
+    const generate = el("button", "primary", "Generate");
+    generate.disabled = true;
+    generate.title = "Paste the job description first";
+    actions.append(generate);
+
+    const dismiss = el("button", null, "Dismiss");
+    dismiss.addEventListener("click", () => changeStatus(posting.sourceId, "dismissed"));
+    actions.append(dismiss);
+    pane.append(actions);
+
+    if (posting.leadSource) {
+        pane.append(el("p", "lead-origin", `Lead from ${posting.leadSource.replace("gmail:", "Gmail · ")}`));
+    }
+    if (posting.snippet) {
+        pane.append(el("p", "lead-snippet", posting.snippet));
+    }
+
+    const box = el("section", "paste-box");
+    box.append(el("h3", "paste-heading", "Paste the full job description"));
+    box.append(
+        el(
+            "p",
+            "paste-hint",
+            "Open the original posting, copy its whole description, and paste it here. That turns " +
+                "this lead into a posting you can generate from.",
+        ),
+    );
+
+    const textarea = el("textarea", "paste-area");
+    textarea.rows = 16;
+    textarea.placeholder = "Paste the job description…";
+    box.append(textarea);
+
+    const save = el("button", "primary paste-save", "Save description");
+    save.addEventListener("click", async () => {
+        const description = textarea.value.trim();
+        if (!description) {
+            textarea.focus();
+            return;
+        }
+        save.disabled = true;
+        save.textContent = "Saving…";
+        try {
+            await api(`/api/postings/${encodeURIComponent(posting.sourceId)}/description`, {
+                method: "POST",
+                body: {description},
+            });
+            await refreshAll();
+            await openDetail(posting.sourceId); // now a `new` posting, Generate enabled
+        } catch (error) {
+            alert(`Could not save: ${error.message}`);
+            save.disabled = false;
+            save.textContent = "Save description";
+        }
+    });
+    box.append(save);
+    pane.append(box);
+
+    pane.append(el("h3", null, "Notes"));
+    pane.append(notesField(posting));
+}
+
 function renderTracking(pane, posting) {
     if (!["applied", "closed"].includes(posting.status)) {
         pane.append(el("h3", null, "Notes"));
@@ -644,6 +724,45 @@ async function runSearch(button) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Gmail                                                                */
+/* ------------------------------------------------------------------ */
+
+/** Shows the Gmail button only when an account is actually authorised. */
+async function refreshGmail() {
+    const button = $("gmail-fetch");
+    try {
+        const status = await api("/api/gmail/status");
+        button.hidden = !status.authorised;
+        if (status.authorised) {
+            button.title = `Read ${status.label} in ${status.account}`;
+        }
+    } catch {
+        button.hidden = true;
+    }
+}
+
+async function fetchFromGmail(button) {
+    button.disabled = true;
+    button.textContent = "Fetching…";
+    try {
+        const result = await api("/api/gmail/fetch", {method: "POST", body: {}});
+        const suffix = result.unparsed
+            ? ` ${result.unparsed} message(s) matched a sender but yielded nothing.`
+            : "";
+        alert(
+            `Read ${result.messagesRead} message(s) under "${result.label}". ` +
+                `${result.added} new lead(s).${suffix}`,
+        );
+        await refreshAll();
+    } catch (error) {
+        alert(`Gmail fetch failed: ${error.message}`);
+    } finally {
+        button.disabled = false;
+        button.textContent = "Fetch from Gmail";
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* Polling                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -756,6 +875,7 @@ async function init() {
     $("keywords").addEventListener("keydown", (event) => {
         if (event.key === "Enter") runSearch($("search"));
     });
+    $("gmail-fetch").addEventListener("click", (event) => fetchFromGmail(event.currentTarget));
 
     for (const button of document.querySelectorAll(".filter")) {
         button.addEventListener("click", async () => {
@@ -805,6 +925,7 @@ async function init() {
     });
 
     refreshAll();
+    refreshGmail();
     // One read to find out whether anything is running; it starts the timer
     // only if there is.
     pollQueue();

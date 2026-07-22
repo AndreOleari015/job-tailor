@@ -90,7 +90,14 @@ export async function generateForPosting(
     const posting = context.store.getPosting(sourceId);
     if (!posting) throw new Error(`No posting with id "${sourceId}".`);
     if (!posting.rawText?.trim()) {
-        throw new Error(`"${sourceId}" has no stored job text to generate from.`);
+        // A lead is missing exactly one thing, and it is the one thing that has
+        // to come from a human: the job description the alert email left out.
+        throw new Error(
+            posting.status === "lead"
+                ? `"${sourceId}" is a lead with no job description yet. Open the original posting, ` +
+                      "copy the full description, and paste it in before generating."
+                : `"${sourceId}" has no stored job text to generate from.`,
+        );
     }
 
     // Each stage is stamped as it starts, so the UI counts up from the step it

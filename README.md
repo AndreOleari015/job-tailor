@@ -10,7 +10,7 @@
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" />
   <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A522-339933?logo=nodedotjs&logoColor=white" />
   <img alt="Providers" src="https://img.shields.io/badge/LLM-Gemini%20%7C%20Claude-8A2BE2" />
-  <img alt="Tests" src="https://img.shields.io/badge/tests-395%20passing-success" />
+  <img alt="Tests" src="https://img.shields.io/badge/tests-425%20passing-success" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue" />
 </p>
 
@@ -231,6 +231,13 @@ Prints the tracker's counts and the gaps that come up most often — the same fi
 
 Lists each source, whether its credentials are present, and the board tokens configured for it.
 
+### `job-tailor gmail <auth | revoke | check | fetch>`
+
+Reads read-only job-alert emails from one Gmail label and turns them into leads. `auth` runs the
+OAuth flow, `revoke` deletes the cached token, `check` verifies the account and label, and `fetch`
+(`--since <days>`, `--max <n>`, `--dry-run`) upserts new leads. See
+[Gmail leads, and the privacy boundary](#gmail-leads-and-the-privacy-boundary).
+
 ### `job-tailor discover`
 
 Finds board tokens for the companies in `data/candidates.yaml` by probing the public board
@@ -341,6 +348,7 @@ diff -r output/acme-*/            # compare the two cover letters
 | `JOB_TAILOR_CANDIDATES`    | `data/candidates.yaml` | Companies worth checking, by country.             |
 | `JOB_TAILOR_JOBS_DIR`      | `jobs`              | Where `pull` writes job files.                       |
 | `JOB_TAILOR_PORT`          | `4321`              | Port `serve` listens on; `--port` still wins.        |
+| `JOB_TAILOR_GMAIL_LABEL`   | `job-alerts`        | The one Gmail label all reads are confined to.       |
 | `DEBUG`                    | —                   | `1` logs usage, writes transcripts, full traces.     |
 
 Model resolution per task is `JOB_TAILOR_{TASK}_MODEL` > `JOB_TAILOR_MODEL` > provider default,
@@ -702,6 +710,45 @@ Gaps are kept in the database for one reason: `stats()` counts the ones that com
 across everything generated. A gap repeated across twenty postings is a study plan, not a
 rejection.
 
+### Gmail leads, and the privacy boundary
+
+Job alerts from LinkedIn, Indeed and Welcome to the Jungle land in your inbox already; this reads
+them and turns each into a **lead** — company, title, location and a link, but not the full
+description, because the alert never carries it. A lead is a status of its own: you paste the
+description in the web UI, which promotes it to a normal posting you can generate from. Nothing is
+generated from a lead directly, and the paste box is the dominant element of a lead's panel
+because that paste is the whole point.
+
+**The tool asks for `gmail.readonly` — read only. It never modifies a message, never sends, never
+deletes.** That scope is the narrowest Google offers, and it still grants the entire mailbox, so
+the real restriction lives in code:
+
+- **Every Gmail query is built by one function that prefixes `label:{your label}`, and it cannot
+  build a query without it.** There is no code path that reads mail outside that label.
+- **If the label does not exist, the fetch stops with an error** telling you to create it — it
+  never falls back to searching the whole mailbox.
+- **Message bodies are never written to disk.** Only the parsed leads are stored; the email text
+  is read, parsed and discarded.
+- **The token is yours to revoke** with `job-tailor gmail revoke`, which deletes the cached token.
+
+Set it up once:
+
+1. In the Google Cloud console, create a project, enable the Gmail API, and create an **OAuth
+   client of type Desktop**. Download its JSON to `data/gmail-credentials.json` (gitignored).
+2. In Gmail, create a label — `job-alerts` by default, or set `JOB_TAILOR_GMAIL_LABEL` — and a
+   **filter** that applies it to your alert senders (`from:linkedin.com OR from:indeed.com …`).
+   This is what the tool confines itself to.
+3. `job-tailor gmail auth` opens the consent flow and caches a read-only token to
+   `data/gmail-token.json` (gitignored). `job-tailor gmail check` confirms the account and that
+   the label exists.
+
+Then `job-tailor gmail fetch` (or the **Fetch from Gmail** button, shown only once authorised)
+reads the label's alerts and upserts new leads. Parsers are per sender — LinkedIn, Indeed, WTTJ —
+with a generic link extractor as the last resort, marking those leads `gmail:generic` so their
+lower confidence is visible. A parser that matches a sender but extracts nothing from a real body
+**warns loudly**: these templates change without notice, and silent breakage is the failure mode
+of every email parser, so it is made noisy on purpose.
+
 ### Sources: documented APIs only
 
 | Source           | Kind       | Credentials                     | Notes                              |
@@ -967,6 +1014,7 @@ src/
 │   ├── adzuna.ts / arbeitsagentur.ts            aggregators
 │   ├── candidates.ts companies worth checking, by country
 │   ├── discover.ts   board-token probing: slug guesses, pacing, probe budget
+│   ├── gmail/        read-only alert emails -> leads (auth, query, parsers)
 │   ├── cache.ts      postings by sourceId + probed tokens, with eviction
 │   ├── registry.ts   name -> source
 │   └── index.ts      searchAll(), fetchPosting(), dedupe, pre-scoring
@@ -1001,7 +1049,7 @@ npm test          # tsc, then vitest
 npm run test:watch
 ```
 
-395 tests. All but one make no network call and drive no browser. They cover the zod schemas
+425 tests. All but one make no network call and drive no browser. They cover the zod schemas
 against valid and malformed fixtures, the `callJson` retry loop against mocked SDKs, provider and
 per-task model resolution, the `ConfigError` for each provider's missing key, Gemini's backoff
 and quota handling, the JSON Schema conversion, the `DEBUG=1` transcript (written when set,
@@ -1070,6 +1118,7 @@ browser.
 | 3     | job-board ingestion from documented public APIs             | Done   |
 | 3.5   | board-token discovery by probing public endpoints           | Done   |
 | 4     | local web UI + SQLite application tracking                  | Done   |
+| 5     | Gmail as a lead source: read-only, one label, paste-to-generate | Done |
 | 3.6   | country profiles: per-market salary threshold + authorisation | Done |
 | 3.7   | location filtering: `search --country` reads the posting, not the company | Done |
 | 3.8   | DACH disambiguation, posting language, multi-word keyword matching | Done |

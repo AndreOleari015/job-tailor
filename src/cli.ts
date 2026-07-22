@@ -22,6 +22,7 @@ import {
     readPort,
     readPreScoreMin,
     readProfilePath,
+    GMAIL_TOKEN_PATH,
     resolveModel,
     resolveProviderName,
     setProviderOverride,
@@ -407,6 +408,32 @@ function reportRenderPaths(rendered: {cvPath: string; coverPath: string | null})
     process.stdout.write(
         `${label("Cover letter")}${rendered.coverPath ?? "(not rendered)"}\n`,
     );
+}
+
+function printLeadTable(leads: readonly {company: string | null; title: string; location: string | null; leadSource: string}[]): void {
+    if (!leads.length) {
+        process.stdout.write("No new leads.\n");
+        return;
+    }
+    const header = [
+        truncate("COMPANY", 22),
+        truncate("TITLE", 40),
+        truncate("LOCATION", 20),
+        "SOURCE",
+    ].join("  ");
+    const lines = [header, "-".repeat(header.length)];
+    for (const lead of leads) {
+        lines.push(
+            [
+                truncate(lead.company ?? "(unknown)", 22),
+                truncate(lead.title, 40),
+                truncate(lead.location ?? "—", 20),
+                lead.leadSource,
+            ].join("  "),
+        );
+    }
+    lines.push("", "Leads carry no description. Paste it in the web UI before generating.");
+    process.stdout.write(`${lines.join("\n")}\n`);
 }
 
 /* ------------------------------------------------------------------ */
@@ -818,6 +845,100 @@ program
                     "Generation runs one at a time. Nothing is ever submitted for you.\n",
             );
             if (options.open) openInDefaultApp(url);
+        }),
+    );
+
+const gmail = program
+    .command("gmail")
+    .description("Read job-alert emails from one Gmail label and turn them into leads.");
+
+gmail
+    .command("auth")
+    .description("Authorise read-only Gmail access via the desktop OAuth flow.")
+    .action(
+        guarded(async () => {
+            const {runAuthFlow, createGmailClient} = await import("./sources/gmail/index.js");
+            const client = createGmailClient(await runAuthFlow());
+            const account = await client.profileEmail();
+            process.stdout.write(
+                `Authorised ${account} (read-only). Token cached at ${GMAIL_TOKEN_PATH}.\n`,
+            );
+        }),
+    );
+
+gmail
+    .command("revoke")
+    .description("Delete the cached Gmail token.")
+    .action(
+        guarded(async () => {
+            const {revokeToken} = await import("./sources/gmail/index.js");
+            const removed = await revokeToken();
+            process.stdout.write(
+                removed
+                    ? `Deleted ${GMAIL_TOKEN_PATH}. Run \`gmail auth\` to grant access again.\n`
+                    : "No cached token to delete.\n",
+            );
+        }),
+    );
+
+gmail
+    .command("check")
+    .description("Verify credentials, token and that the label exists.")
+    .action(
+        guarded(async () => {
+            const {gmailStatus} = await import("./server/gmail.js");
+            const status = await gmailStatus();
+
+            if (!status.authorised) {
+                note("Gmail is not authorised. Run `job-tailor gmail auth` first.");
+                process.exitCode = 1;
+                return;
+            }
+            const lines = [
+                `${label("Account")}${status.account}`,
+                `${label("Label")}${status.label}`,
+            ];
+            if (status.labelExists) {
+                lines.push(`${label("Messages")}${status.labelMessages} carry the label`);
+            } else {
+                lines.push(
+                    `${label("Label")}NOT FOUND — create "${status.label}" in Gmail and add a ` +
+                        "filter that applies it to your job alerts.",
+                );
+                process.exitCode = 1;
+            }
+            process.stdout.write(`${lines.join("\n")}\n`);
+        }),
+    );
+
+gmail
+    .command("fetch")
+    .description("Read the label's alert emails and upsert new leads.")
+    .option("--since <days>", "only messages from the last N days", "7")
+    .option("--max <n>", "maximum messages to read", "100")
+    .option("--dry-run", "parse and print, write nothing")
+    .action(
+        guarded(async (options: {since: string; max: string; dryRun?: boolean}) => {
+            const {runGmailFetch} = await import("./server/gmail.js");
+            const store = openStore();
+            try {
+                const outcome = await runGmailFetch(store, {
+                    sinceDays: Number(options.since),
+                    max: Number(options.max),
+                    ...(options.dryRun ? {dryRun: true} : {}),
+                });
+                printLeadTable(outcome.leads);
+                const wrote = options.dryRun ? "(dry run, nothing written)" : `${outcome.added} new`;
+                note(
+                    `Read ${outcome.messagesRead} messages under "${outcome.label}", ` +
+                        `${outcome.leads.length} leads, ${wrote}.` +
+                        (outcome.unparsed
+                            ? ` ${outcome.unparsed} matched a sender but yielded nothing — see warnings above.`
+                            : ""),
+                );
+            } finally {
+                store.close();
+            }
         }),
     );
 

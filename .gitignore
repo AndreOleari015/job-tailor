@@ -23,6 +23,11 @@ data/tracker.db
 data/tracker.db-shm
 data/tracker.db-wal
 
+# Gmail OAuth: your desktop credentials and the cached read-only token.
+# Both are secrets and neither belongs in git.
+data/gmail-credentials.json
+data/gmail-token.json
+
 *.log
 npm-debug.log*
 .DS_Store

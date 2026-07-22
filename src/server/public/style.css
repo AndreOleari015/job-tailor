@@ -347,3 +347,33 @@ ul.plain li { margin-bottom: 3px; }
 
 .pill.status-queued { background: var(--surface-2); color: var(--muted); }
 .pill.status-generating { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+
+/* Leads -------------------------------------------------------------- */
+
+.pill.status-lead { background: #6b4ea8; color: #fff; border-color: transparent; }
+@media (prefers-color-scheme: dark) {
+    .pill.status-lead { background: #b79ce8; color: #17111f; }
+}
+
+.lead-origin { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+.lead-snippet {
+    margin: 8px 0 0;
+    padding: 10px 12px;
+    background: var(--surface-2);
+    border-radius: 8px;
+    font-size: 14px;
+    color: var(--muted);
+}
+
+/* The paste box is the point of the lead panel — it dominates deliberately. */
+.paste-box {
+    margin-top: 18px;
+    padding: 16px;
+    border: 2px solid var(--accent);
+    border-radius: var(--radius);
+    background: var(--surface);
+}
+.paste-heading { margin: 0; font-size: 16px; text-transform: none; letter-spacing: 0; color: var(--ink); }
+.paste-hint { margin: 6px 0 10px; color: var(--muted); font-size: 13px; }
+.paste-area { width: 100%; resize: vertical; }
+.paste-save { margin-top: 10px; }
