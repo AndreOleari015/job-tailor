@@ -93,6 +93,10 @@ export async function generateForPosting(
         throw new Error(`"${sourceId}" has no stored job text to generate from.`);
     }
 
+    // Each stage is stamped as it starts, so the UI counts up from the step it
+    // is actually on. Tailoring dwarfs the others, and saying so beats a
+    // progress bar that would have to invent a percentage.
+    context.store.setStage(sourceId, "extracting");
     const profile = await context.pipeline.loadProfile(context.profilePath);
     const jobSpec = await context.pipeline.extract(posting.rawText);
 
@@ -101,6 +105,7 @@ export async function generateForPosting(
         `${slugify(jobSpec.company)}-${slugify(jobSpec.role)}`,
     );
 
+    context.store.setStage(sourceId, "tailoring");
     const tailored = await context.pipeline.tailor(profile, jobSpec);
     const application = applyMinScore(tailored, {minScore: readMinScore()});
 
@@ -111,6 +116,7 @@ export async function generateForPosting(
     let coverPath: string | null = null;
     let renderBlocked: string | undefined;
 
+    context.store.setStage(sourceId, "rendering");
     try {
         const rendered = await context.pipeline.render({profile, jobSpec, application, outDir});
         cvPath = rendered.cvPath;

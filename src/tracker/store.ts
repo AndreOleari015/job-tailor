@@ -41,6 +41,18 @@ const TRANSITIONS: Record<Status, readonly Status[]> = {
     closed: [],
 };
 
+/**
+ * The steps of one generation, in order. This is a detail of the `generating`
+ * status, not a status: the state machine above is unchanged, and nothing
+ * transitions on a stage.
+ */
+export const STAGES = ["queued", "extracting", "tailoring", "rendering"] as const;
+export type Stage = (typeof STAGES)[number];
+
+export function isStage(value: string): value is Stage {
+    return (STAGES as readonly string[]).includes(value);
+}
+
 /** An outcome describes something that happened after applying. */
 const OUTCOME_STATUSES: readonly Status[] = ["applied", "closed"];
 
@@ -78,6 +90,9 @@ export interface PostingRecord {
     rawText: string | null;
     language: string | null;
     status: Status;
+    /** The step a running generation is on. Null unless status is 'generating'. */
+    stage: Stage | null;
+    stageStartedAt: string | null;
     outDir: string | null;
     matchScore: number | null;
     flags: string[];
@@ -145,6 +160,8 @@ interface Row {
     raw_text: string | null;
     language: string | null;
     status: string;
+    stage: string | null;
+    stage_started_at: string | null;
     out_dir: string | null;
     match_score: number | null;
     flags: string | null;
@@ -181,6 +198,8 @@ function toRecord(row: Row): PostingRecord {
         rawText: row.raw_text,
         language: row.language,
         status: isStatus(row.status) ? row.status : "new",
+        stage: row.stage && isStage(row.stage) ? row.stage : null,
+        stageStartedAt: row.stage_started_at,
         outDir: row.out_dir,
         matchScore: row.match_score,
         flags: parseJsonArray(row.flags),
@@ -222,6 +241,8 @@ const SCHEMA_PATH = fileURLToPath(new URL("./schema.sql", import.meta.url));
  */
 const ADDED_COLUMNS: readonly {name: string; ddl: string}[] = [
     {name: "language", ddl: "ALTER TABLE postings ADD COLUMN language TEXT"},
+    {name: "stage", ddl: "ALTER TABLE postings ADD COLUMN stage TEXT"},
+    {name: "stage_started_at", ddl: "ALTER TABLE postings ADD COLUMN stage_started_at TEXT"},
 ];
 
 function migrate(db: Database.Database): void {
@@ -436,6 +457,39 @@ export class TrackerStore {
     }
 
     /** Records a successful generation and moves the posting to `generated`. */
+    /**
+     * Marks which step a running generation is on. Stamped with its own start
+     * time so the UI can count up from it — the elapsed time belongs to the
+     * stage, not to the whole job, because tailoring dwarfs the others.
+     */
+    setStage(sourceId: string, stage: Stage): PostingRecord {
+        this.require(sourceId);
+        this.db
+            .prepare(
+                "UPDATE postings SET stage = ?, stage_started_at = ?, updated_at = ? WHERE source_id = ?",
+            )
+            .run(stage, this.now(), this.now(), sourceId);
+        return this.require(sourceId);
+    }
+
+    /**
+     * Resets postings left mid-generation by a server that stopped.
+     *
+     * The queue is in memory, so a restart forgets what was running while the
+     * database still says `generating` — a status whose only exits are taken by
+     * the process that died. Without this they would be stranded there forever.
+     */
+    resetInterruptedGenerations(): number {
+        const stranded = this.db
+            .prepare("SELECT source_id FROM postings WHERE status = 'generating'")
+            .all() as {source_id: string}[];
+
+        for (const row of stranded) {
+            this.recordFailure(row.source_id, "interrupted by server restart");
+        }
+        return stranded.length;
+    }
+
     recordGeneration(sourceId: string, result: GenerationResult): PostingRecord {
         this.require(sourceId);
         this.db
@@ -443,7 +497,8 @@ export class TrackerStore {
                 `UPDATE postings
                     SET out_dir = ?, match_score = ?, flags = ?, gaps = ?,
                         country = COALESCE(?, country),
-                        status = 'generated', last_error = NULL, updated_at = ?
+                        status = 'generated', last_error = NULL,
+                        stage = NULL, stage_started_at = NULL, updated_at = ?
                   WHERE source_id = ?`,
             )
             .run(
@@ -463,7 +518,10 @@ export class TrackerStore {
         this.require(sourceId);
         this.db
             .prepare(
-                "UPDATE postings SET status = 'failed', last_error = ?, updated_at = ? WHERE source_id = ?",
+                `UPDATE postings
+                    SET status = 'failed', last_error = ?,
+                        stage = NULL, stage_started_at = NULL, updated_at = ?
+                  WHERE source_id = ?`,
             )
             .run(message, this.now(), sourceId);
         return this.require(sourceId);

@@ -57,6 +57,17 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
         ...(options.outputRoot ? {outputRoot: options.outputRoot} : {}),
     });
 
+    // The queue is in memory, so a process that stopped mid-generation left
+    // rows in `generating` with nothing behind them. `generating` only exits
+    // via the run that died, so they would be stranded there permanently.
+    const stranded = options.store.resetInterruptedGenerations();
+    if (stranded) {
+        process.stderr.write(
+            `[job-tailor] reset ${stranded} posting${stranded === 1 ? "" : "s"} left ` +
+                "generating by a previous run\n",
+        );
+    }
+
     registerRoutes(app, context, new GenerationQueue());
 
     if (options.serveStatic ?? true) {

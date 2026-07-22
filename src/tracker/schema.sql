@@ -19,6 +19,10 @@ CREATE TABLE IF NOT EXISTS postings (
     raw_text    TEXT,
     -- "de" | "en" | "unknown", from the deterministic check in sources/language.ts.
     language    TEXT,
+    -- Which step of a generation is running. Null unless status is 'generating';
+    -- a detail of that status, never a status of its own.
+    stage            TEXT,
+    stage_started_at TEXT,
     status      TEXT NOT NULL DEFAULT 'new',
     out_dir     TEXT,
     match_score INTEGER,

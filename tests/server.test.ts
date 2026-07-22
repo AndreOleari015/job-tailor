@@ -427,6 +427,8 @@ describe("POST /api/search", () => {
 /* Queue                                                                */
 /* ------------------------------------------------------------------ */
 
+const LABEL = {company: "Meridian", title: "React Native Engineer"};
+
 describe("GenerationQueue", () => {
     it("serialises two concurrent jobs", async () => {
         const queue = new GenerationQueue();
@@ -439,7 +441,7 @@ describe("GenerationQueue", () => {
             return name;
         };
 
-        const both = Promise.all([queue.enqueue("a", task("a")), queue.enqueue("b", task("b"))]);
+        const both = Promise.all([queue.enqueue("a", LABEL, task("a")), queue.enqueue("b", LABEL, task("b"))]);
         expect(queue.status().current).toBeNull();
 
         await both;
@@ -450,14 +452,14 @@ describe("GenerationQueue", () => {
     it("keeps running after a job throws", async () => {
         const queue = new GenerationQueue();
 
-        const failing = queue.enqueue("a", async () => {
+        const failing = queue.enqueue("a", LABEL, async () => {
             throw new Error("boom");
         });
-        const following = queue.enqueue("b", async () => "ok");
+        const following = queue.enqueue("b", LABEL, async () => "ok");
 
         await expect(failing).rejects.toThrow("boom");
         await expect(following).resolves.toBe("ok");
-        expect(queue.status()).toEqual({current: null, pending: []});
+        expect(queue.status()).toMatchObject({current: null, pending: []});
     });
 
     it("reports what is running and what is waiting", async () => {
@@ -465,8 +467,8 @@ describe("GenerationQueue", () => {
         let release: () => void = () => {};
         const gate = new Promise<void>((resolve) => (release = resolve));
 
-        const first = queue.enqueue("a", () => gate);
-        const second = queue.enqueue("b", async () => undefined);
+        const first = queue.enqueue("a", LABEL, () => gate);
+        const second = queue.enqueue("b", LABEL, async () => undefined);
 
         await Promise.resolve();
         await Promise.resolve();
@@ -608,5 +610,140 @@ describe("POST /api/search language", () => {
             payload: {keywords: ["react"], language: "klingon"},
         });
         expect(seen).toBeUndefined();
+    });
+});
+
+/* ------------------------------------------------------------------ */
+/* Phase 4.1: stages, queue visibility and cancellation                 */
+/* ------------------------------------------------------------------ */
+
+describe("the queue as something you can watch", () => {
+    it("numbers what is running 0 and what waits behind it from 1", async () => {
+        const queue = new GenerationQueue();
+        let release = () => {};
+        const gate = new Promise<void>((resolve) => (release = resolve));
+
+        const first = queue.enqueue("a", {company: "Celonis", title: "Engineer"}, () => gate);
+        const second = queue.enqueue("b", {company: "N26", title: "Mobile"}, async () => undefined);
+        const third = queue.enqueue("c", {company: "SumUp", title: "React Native"}, async () => undefined);
+
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const {entries} = queue.status();
+        expect(entries.map((one) => [one.sourceId, one.position])).toEqual([
+            ["a", 0],
+            ["b", 1],
+            ["c", 2],
+        ]);
+        expect(entries[0]?.company).toBe("Celonis");
+
+        release();
+        await Promise.all([first, second, third]);
+        expect(queue.status().entries).toEqual([]);
+    });
+
+    it("refuses to enqueue the same posting twice", async () => {
+        const queue = new GenerationQueue();
+        let release = () => {};
+        const gate = new Promise<void>((resolve) => (release = resolve));
+
+        const running = queue.enqueue("a", LABEL, () => gate);
+        expect(() => queue.enqueue("a", LABEL, async () => undefined)).toThrow(/already queued/i);
+
+        release();
+        await running;
+    });
+
+    it("cancels a waiting posting and renumbers the rest", async () => {
+        const queue = new GenerationQueue();
+        let release = () => {};
+        const gate = new Promise<void>((resolve) => (release = resolve));
+
+        const first = queue.enqueue("a", LABEL, () => gate);
+        const second = queue.enqueue("b", LABEL, async () => "b");
+        const third = queue.enqueue("c", LABEL, async () => "c");
+
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(queue.cancel("b")).toBe(true);
+
+        // c moves up rather than keeping the hole b left.
+        expect(queue.status().entries.map((one) => [one.sourceId, one.position])).toEqual([
+            ["a", 0],
+            ["c", 1],
+        ]);
+
+        release();
+        await expect(second).rejects.toThrow(/cancelled/i);
+        await Promise.all([first, third]);
+    });
+
+    it("refuses to cancel the posting already running", async () => {
+        const queue = new GenerationQueue();
+        let release = () => {};
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        const running = queue.enqueue("a", LABEL, () => gate);
+
+        await Promise.resolve();
+        await Promise.resolve();
+        // Stopping it here would hide the model call, not end it.
+        expect(() => queue.cancel("a")).toThrow(/cannot be cancelled/i);
+
+        release();
+        await running;
+    });
+
+    it("reports nothing for a posting that was never queued", () => {
+        expect(new GenerationQueue().cancel("nobody")).toBe(false);
+    });
+});
+
+describe("GET /api/status", () => {
+    it("is empty on a quiet server", async () => {
+        const {app} = await harness();
+        const response = await app.inject({method: "GET", url: "/api/status"});
+
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toEqual({running: null, queue: [], queueLength: 0});
+    });
+});
+
+describe("POST /api/postings/:id/cancel", () => {
+    it("returns a queued posting to new, leaving the running one alone", async () => {
+        let release = () => {};
+        const gate = new Promise<void>((resolve) => (release = resolve));
+
+        const {app, store} = await harness({
+            async tailor(profile, jobSpec) {
+                await gate;
+                return application;
+            },
+        });
+        store.upsertPostings([posting({sourceId: "a"}), posting({sourceId: "b"})]);
+
+        const first = app.inject({method: "POST", url: "/api/postings/a/generate"});
+        const second = app.inject({method: "POST", url: "/api/postings/b/generate"});
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        const cancelled = await app.inject({method: "POST", url: "/api/postings/b/cancel"});
+        expect(cancelled.statusCode).toBe(200);
+        // It never left `new`: waiting in a queue is not a status.
+        expect(store.getPosting("b")?.status).toBe("new");
+
+        const refused = await app.inject({method: "POST", url: "/api/postings/a/cancel"});
+        expect(refused.statusCode).toBe(409);
+        expect(refused.json().error).toMatch(/cannot be cancelled/i);
+
+        release();
+        await Promise.all([first, second]);
+    });
+
+    it("404s for a posting that is not queued at all", async () => {
+        const {app, store} = await harness();
+        store.upsertPostings([posting({sourceId: "a"})]);
+
+        const response = await app.inject({method: "POST", url: "/api/postings/a/cancel"});
+        expect(response.statusCode).toBe(404);
     });
 });

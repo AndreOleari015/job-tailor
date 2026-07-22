@@ -59,7 +59,31 @@ export function registerRoutes(
 ): void {
     const {store} = context;
 
-    app.get("/api/status", async () => queue.status());
+    app.get("/api/status", async () => {
+        const {entries} = queue.status();
+        const [running, ...waiting] = entries;
+
+        // The stage and its clock come from the database, which the pipeline
+        // stamps as it goes; the queue only knows what is running, not where
+        // it has got to.
+        const record = running ? store.getPosting(running.sourceId) : undefined;
+        const startedAt = record?.stageStartedAt ? Date.parse(record.stageStartedAt) : NaN;
+
+        return {
+            running: running
+                ? {
+                      sourceId: running.sourceId,
+                      company: running.company,
+                      title: running.title,
+                      stage: record?.stage ?? "queued",
+                      stageStartedAt: record?.stageStartedAt ?? null,
+                      elapsedMs: Number.isFinite(startedAt) ? Date.now() - startedAt : 0,
+                  }
+                : null,
+            queue: waiting,
+            queueLength: waiting.length,
+        };
+    });
 
     app.get("/api/stats", async () => store.stats());
 
@@ -153,21 +177,44 @@ export function registerRoutes(
         if (queue.isQueued(id)) return reply.code(409).send({error: "Already queued."});
 
         try {
-            store.setStatus(id, "generating");
-        } catch (error) {
-            return reply
-                .code(409)
-                .send({error: error instanceof Error ? error.message : String(error)});
-        }
-
-        try {
-            const outcome = await queue.enqueue(id, () => generateForPosting(context, id));
+            const outcome = await queue.enqueue(
+                id,
+                {company: posting.company, title: posting.title ?? id},
+                () => {
+                    // Only now, when its turn has actually come. A posting that
+                    // is merely waiting stays `new`, so cancelling it is a
+                    // matter of dropping it from the queue and nothing else.
+                    store.setStatus(id, "generating");
+                    return generateForPosting(context, id);
+                },
+            );
             return reply.send(outcome);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             store.recordFailure(id, message);
             return reply.code(500).send({error: message});
         }
+    });
+
+    app.post<{Params: {id: string}}>("/api/postings/:id/cancel", async (request, reply) => {
+        const id = request.params.id;
+        if (!store.getPosting(id)) return reply.code(404).send({error: "No such posting."});
+
+        try {
+            if (!queue.cancel(id)) {
+                return reply.code(404).send({error: `"${id}" is not queued.`});
+            }
+        } catch (error) {
+            // Already running: say so rather than pretending to stop a model
+            // call that is already in flight.
+            return reply
+                .code(409)
+                .send({error: error instanceof Error ? error.message : String(error)});
+        }
+
+        // It never left `new` — waiting in the queue is not a status — so there
+        // is nothing to undo beyond removing it.
+        return reply.send(store.getPosting(id));
     });
 
     app.get<{Params: {id: string}}>("/api/postings/:id/application", async (request, reply) => {

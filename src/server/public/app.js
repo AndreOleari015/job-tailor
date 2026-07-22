@@ -6,6 +6,18 @@
 
 const SETTINGS_KEY = "job-tailor.search";
 
+/*
+ * The API's stage names are the contract; these are what a person reads. A
+ * generation is three steps of wildly different length, and saying which one is
+ * running beats a progress bar that would have to invent a percentage.
+ */
+const STAGE_LABELS = {
+    queued: "Waiting its turn",
+    extracting: "Reading the posting",
+    tailoring: "Writing the application",
+    rendering: "Building the PDFs",
+};
+
 /** What the language column prints. "unknown" means too little prose to tell. */
 const LANGUAGE_LABELS = {de: "German", en: "English", unknown: "—"};
 
@@ -47,7 +59,28 @@ const state = {
     postings: [],
     selectedId: null,
     status: "",
+    /** Last /api/status response: what is running and what is waiting. */
+    queue: {running: null, queue: [], queueLength: 0},
+    polling: false,
 };
+
+/** Where a posting sits in the queue right now, if anywhere. */
+function queueStateOf(sourceId) {
+    if (state.queue.running?.sourceId === sourceId) {
+        return {running: true, stage: state.queue.running.stage};
+    }
+    const waiting = state.queue.queue.find((entry) => entry.sourceId === sourceId);
+    return waiting ? {running: false, position: waiting.position} : null;
+}
+
+const ORDINALS = ["", "1st", "2nd", "3rd"];
+function ordinal(n) {
+    return ORDINALS[n] ?? `${n}th`;
+}
+
+function seconds(ms) {
+    return `${Math.max(0, Math.round(ms / 1000))}s`;
+}
 
 /* ------------------------------------------------------------------ */
 /* DOM helpers                                                          */
@@ -177,6 +210,19 @@ function statusPill(status) {
     return el("span", `pill status-${status}`, status);
 }
 
+/**
+ * A posting in the queue reports that instead of its stored status: the row is
+ * what you are watching, and "new" while it is third in line is a lie.
+ */
+function queuePill(sourceId, status) {
+    const queued = queueStateOf(sourceId);
+    if (!queued) return statusPill(status);
+
+    return queued.running
+        ? el("span", "pill status-generating", `generating · ${STAGE_LABELS[queued.stage] ?? queued.stage}`)
+        : el("span", "pill status-queued", `queued · ${ordinal(queued.position)}`);
+}
+
 function buildRow(posting) {
     const blocking = posting.flags.filter(isBlocking);
     const row = el("li", `row${blocking.length ? " has-flags" : ""}`);
@@ -197,7 +243,7 @@ function buildRow(posting) {
     if (posting.matchScore !== null && posting.matchScore !== undefined) {
         scores.append(el("span", "badge", `match ${posting.matchScore}`));
     }
-    scores.append(statusPill(posting.status));
+    scores.append(queuePill(posting.sourceId, posting.status));
     head.append(scores);
 
     const meta = el("div", "row-meta");
@@ -277,10 +323,24 @@ async function openDetail(id) {
 
     /* Actions */
     const actions = el("div", "detail-actions");
+    const queued = queueStateOf(id);
     const canGenerate = ["new", "failed", "generated"].includes(posting.status);
-    if (canGenerate) {
-        const generate = el("button", "primary", posting.status === "generated" ? "Regenerate" : "Generate");
-        generate.addEventListener("click", () => runGeneration(id, generate));
+    if (canGenerate || queued) {
+        const generate = el(
+            "button",
+            "primary",
+            posting.status === "failed" ? "Retry" : posting.status === "generated" ? "Regenerate" : "Generate",
+        );
+        // Already in the queue: the button says where it is rather than
+        // offering to add it a second time.
+        if (queued) {
+            generate.disabled = true;
+            generate.textContent = queued.running
+                ? STAGE_LABELS[queued.stage] ?? "Generating…"
+                : `Queued · ${ordinal(queued.position)}`;
+        } else {
+            generate.addEventListener("click", () => runGeneration(id, generate));
+        }
         actions.append(generate);
     }
     if (posting.status === "generated") {
@@ -313,6 +373,13 @@ async function openDetail(id) {
         pane.append(pre);
         renderTracking(pane, posting);
         return;
+    }
+
+    if (posting.status === "failed" && posting.lastError) {
+        const failure = el("div", "notice");
+        failure.append(el("p", "notice-head", "The last generation failed."));
+        failure.append(el("p", null, posting.lastError));
+        pane.append(failure);
     }
 
     /* Generated content */
@@ -509,14 +576,22 @@ function notesField(posting) {
 
 async function runGeneration(id, button) {
     button.disabled = true;
-    button.textContent = "Generating…";
+    button.textContent = "Queued…";
+
+    // The request only resolves when the whole generation finishes, which can
+    // be minutes behind a queue. Start polling now so the strip reports it
+    // immediately rather than the page sitting silent.
+    const request = api(`/api/postings/${encodeURIComponent(id)}/generate`, {method: "POST"});
+    await pollQueue();
+
     try {
-        await api(`/api/postings/${encodeURIComponent(id)}/generate`, {method: "POST"});
+        await request;
     } catch (error) {
         alert(`Generation failed: ${error.message}`);
     }
+    await pollQueue();
     await refreshAll();
-    await openDetail(id);
+    if (state.selectedId === id) await openDetail(id);
 }
 
 async function changeStatus(id, status) {
@@ -566,20 +641,97 @@ async function runSearch(button) {
 /* Polling                                                              */
 /* ------------------------------------------------------------------ */
 
-async function pollQueue() {
-    try {
-        const status = await api("/api/status");
-        const node = $("queue-state");
-        if (status.current) {
-            node.hidden = false;
-            const waiting = status.pending.length ? ` (+${status.pending.length} queued)` : "";
-            node.textContent = `Generating ${status.current}${waiting}`;
-        } else {
-            node.hidden = true;
-        }
-    } catch {
-        /* the server may be restarting; the next tick will tell us */
+function renderQueueStrip() {
+    const strip = $("queue-strip");
+    const {running, queue} = state.queue;
+    clear(strip);
+
+    if (!running && !queue.length) {
+        strip.hidden = true;
+        return;
     }
+    strip.hidden = false;
+
+    if (running) {
+        const head = el("div", "queue-running");
+        head.append(
+            el("span", "queue-label", "Generating"),
+            el("span", "queue-name", `${running.company || "(unknown)"} — ${running.title}`),
+        );
+        // Elapsed, never a percentage: how long tailoring takes is not knowable,
+        // and a bar stuck at 60% is worse than a number that keeps moving.
+        head.append(
+            el(
+                "span",
+                "queue-stage",
+                `${STAGE_LABELS[running.stage] ?? running.stage} · ${seconds(running.elapsedMs)}`,
+            ),
+        );
+        strip.append(head);
+    }
+
+    if (!queue.length) return;
+
+    strip.append(el("h3", "queue-heading", `Queued (${queue.length})`));
+    const list = el("ol", "queue-list");
+    for (const entry of queue) {
+        const item = el("li");
+        item.append(el("span", null, `${entry.company || "(unknown)"} — ${entry.title}`));
+
+        const cancel = el("button", "queue-cancel", "cancel");
+        cancel.dataset.cancelId = entry.sourceId;
+        item.append(cancel);
+        list.append(item);
+    }
+    strip.append(list);
+}
+
+/**
+ * Polls only while there is something to watch. A quiet server is left alone —
+ * a request every two seconds forever is a background cost with no reader.
+ */
+async function pollQueue() {
+    let status;
+    try {
+        status = await api("/api/status");
+    } catch {
+        // The server may be restarting; try again on the next tick.
+        return;
+    }
+
+    const wasBusy = Boolean(state.queue.running) || state.queue.queue.length > 0;
+    const finished = state.queue.running && status.running?.sourceId !== state.queue.running.sourceId;
+
+    state.queue = status;
+    renderQueueStrip();
+
+    const busy = Boolean(status.running) || status.queue.length > 0;
+
+    // Something completed: bring the row and the counts up to date, and refresh
+    // the open panel if it happens to be the posting that just finished.
+    if (finished || (wasBusy && !busy)) {
+        await refreshAll();
+        if (state.selectedId) await openDetail(state.selectedId);
+    } else if (wasBusy || busy) {
+        // Repaint the rows so their pills follow the stage.
+        for (const row of document.querySelectorAll(".row")) {
+            const posting = state.postings.find((one) => one.sourceId === row.dataset.id);
+            if (posting) row.replaceWith(buildRow(posting));
+        }
+    }
+
+    setPolling(busy);
+}
+
+let pollTimer = null;
+
+function setPolling(on) {
+    if (on && !pollTimer) pollTimer = setInterval(pollQueue, POLL_MS);
+    if (!on && pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+    }
+    state.polling = on;
 }
 
 async function refreshAll() {
@@ -630,9 +782,26 @@ async function init() {
         if (row) openDetail(row.dataset.id);
     });
 
+    $("queue-strip").addEventListener("click", async (event) => {
+        const id = event.target.dataset?.cancelId;
+        if (!id) return;
+
+        event.target.disabled = true;
+        try {
+            await api(`/api/postings/${encodeURIComponent(id)}/cancel`, {method: "POST"});
+        } catch (error) {
+            alert(`Could not cancel: ${error.message}`);
+            event.target.disabled = false;
+            return;
+        }
+        await pollQueue();
+        await refreshAll();
+    });
+
     refreshAll();
+    // One read to find out whether anything is running; it starts the timer
+    // only if there is.
     pollQueue();
-    setInterval(pollQueue, POLL_MS);
 }
 
 init();

@@ -378,3 +378,73 @@ describe("the language backfill", () => {
         reopened.close();
     });
 });
+
+describe("generation stages", () => {
+    it("records the stage and clears it when generation succeeds", () => {
+        const db = store();
+        db.upsertPostings([posting({sourceId: "a"})]);
+        db.setStatus("a", "generating");
+
+        db.setStage("a", "extracting");
+        expect(db.getPosting("a")?.stage).toBe("extracting");
+        expect(db.getPosting("a")?.stageStartedAt).toBeTruthy();
+
+        db.setStage("a", "tailoring");
+        expect(db.getPosting("a")?.stage).toBe("tailoring");
+
+        db.recordGeneration("a", {outDir: "output/a", matchScore: 70, flags: [], gaps: []});
+        expect(db.getPosting("a")?.stage).toBeNull();
+        expect(db.getPosting("a")?.stageStartedAt).toBeNull();
+    });
+
+    it("clears the stage when generation fails too", () => {
+        const db = store();
+        db.upsertPostings([posting({sourceId: "a"})]);
+        db.setStatus("a", "generating");
+        db.setStage("a", "rendering");
+
+        db.recordFailure("a", "boom");
+        expect(db.getPosting("a")?.status).toBe("failed");
+        expect(db.getPosting("a")?.stage).toBeNull();
+        expect(db.getPosting("a")?.stageStartedAt).toBeNull();
+    });
+
+    it("stamps a fresh start time on each stage", async () => {
+        const db = store();
+        db.upsertPostings([posting({sourceId: "a"})]);
+        db.setStatus("a", "generating");
+
+        db.setStage("a", "extracting");
+        const first = db.getPosting("a")?.stageStartedAt;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+
+        db.setStage("a", "tailoring");
+        // The clock in the UI counts the stage, not the whole job.
+        expect(db.getPosting("a")?.stageStartedAt).not.toBe(first);
+    });
+});
+
+describe("resetInterruptedGenerations", () => {
+    it("fails a posting left generating by a process that stopped", () => {
+        const db = store();
+        db.upsertPostings([posting({sourceId: "a"}), posting({sourceId: "b"})]);
+        db.setStatus("a", "generating");
+        db.setStage("a", "tailoring");
+
+        expect(db.resetInterruptedGenerations()).toBe(1);
+
+        const stranded = db.getPosting("a");
+        expect(stranded?.status).toBe("failed");
+        expect(stranded?.lastError).toBe("interrupted by server restart");
+        expect(stranded?.stage).toBeNull();
+        // Everything else is untouched.
+        expect(db.getPosting("b")?.status).toBe("new");
+    });
+
+    it("does nothing on a clean database", () => {
+        const db = store();
+        db.upsertPostings([posting({sourceId: "a"})]);
+        expect(db.resetInterruptedGenerations()).toBe(0);
+        expect(db.getPosting("a")?.status).toBe("new");
+    });
+});

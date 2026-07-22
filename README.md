@@ -10,7 +10,7 @@
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" />
   <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A522-339933?logo=nodedotjs&logoColor=white" />
   <img alt="Providers" src="https://img.shields.io/badge/LLM-Gemini%20%7C%20Claude-8A2BE2" />
-  <img alt="Tests" src="https://img.shields.io/badge/tests-366%20passing-success" />
+  <img alt="Tests" src="https://img.shields.io/badge/tests-379%20passing-success" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue" />
 </p>
 
@@ -628,7 +628,24 @@ language is "never asked", not "unknown", and it would otherwise be invisible to
 
 **Generation is queued, one at a time.** It costs a model call and takes tens of seconds, so the
 server serialises it and exposes what is running at `GET /api/status`; the page polls that every
-two seconds rather than opening a socket. A queued generation cannot be started twice.
+two seconds rather than opening a socket, and **stops polling when nothing is running** — a quiet
+server is left alone. A queued generation cannot be started twice, and the row's own button says
+where it is in the queue instead of offering to add it again.
+
+A strip above the list reports the posting being generated, which of the three steps it is on —
+*Reading the posting*, *Writing the application*, *Building the PDFs* — and how long that step has
+been running. **No progress bar and no percentage:** tailoring dwarfs the other two and neither is
+knowable in advance, so a bar would have to invent one, and a bar stuck at 60% is worse than a
+number that keeps moving. Anything waiting behind it is listed in order with a cancel button.
+
+Cancelling applies to a posting that has not started. The one already running cannot be cancelled
+— the model call is in flight, and stopping it in the UI would hide it rather than end it, so the
+route returns 409 and says so. A posting merely waiting is still `new`, which is what makes
+cancelling it a matter of dropping it from the queue and nothing else.
+
+The queue lives in memory, so a server that stops mid-generation would leave rows in `generating`
+— a status whose only exits belong to the run that died. Startup resets them to `failed` with
+"interrupted by server restart", so nothing is stranded in a status it can never leave.
 
 The primary manual step has a box of its own: the cover letter is editable, and saving re-runs
 `reconcile()` and the renderer **without calling the model**. That matters more than convenience
@@ -959,7 +976,7 @@ npm test          # tsc, then vitest
 npm run test:watch
 ```
 
-366 tests. All but one make no network call and drive no browser. They cover the zod schemas
+379 tests. All but one make no network call and drive no browser. They cover the zod schemas
 against valid and malformed fixtures, the `callJson` retry loop against mocked SDKs, provider and
 per-task model resolution, the `ConfigError` for each provider's missing key, Gemini's backoff
 and quota handling, the JSON Schema conversion, the `DEBUG=1` transcript (written when set,
