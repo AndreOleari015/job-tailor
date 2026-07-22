@@ -1,4 +1,7 @@
 import "dotenv/config";
+import {readFileSync} from "node:fs";
+import {parse as parseYaml} from "yaml";
+import {countriesFileSchema, type CountriesFile, type CountryProfile} from "./types.js";
 
 export type ProviderName = "anthropic" | "gemini";
 export type Task = "extract" | "tailor";
@@ -40,11 +43,8 @@ export const DEFAULT_MIN_SCORE = 40;
  */
 export const DEFAULT_PRESCORE_MIN = 0;
 
-/**
- * Annual gross EUR below which an offer is flagged. Currently the German
- * EU Blue Card threshold for IT specialists without a degree in the field.
- */
-export const SALARY_THRESHOLD_EUR = 45934;
+export const DEFAULT_COUNTRIES_PATH = "data/countries.yaml";
+export const DEFAULT_CANDIDATES_PATH = "data/candidates.yaml";
 
 export class ConfigError extends Error {
     override readonly name = "ConfigError";
@@ -97,6 +97,133 @@ export function readOutputDir(): string {
 }
 
 /* ------------------------------------------------------------------ */
+/* Country profiles                                                     */
+/* ------------------------------------------------------------------ */
+
+export function readCountriesPath(): string {
+    return env("JOB_TAILOR_COUNTRIES") ?? DEFAULT_COUNTRIES_PATH;
+}
+
+/** Parsed once per path. Read synchronously: every caller of it is sync. */
+const countriesByPath = new Map<string, CountriesFile>();
+
+/** Codes already reported as unconfigured, so the warning is said once. */
+const reportedUnconfigured = new Set<string>();
+
+function normaliseCode(code: string): string {
+    return code.trim().toUpperCase();
+}
+
+/**
+ * A country with nothing configured: no threshold to compare against and
+ * nothing that may be said about the right to work there. Both absences are
+ * deliberate outcomes, not missing data to fill in with a guess.
+ */
+function unconfigured(code: string | null): CountryProfile {
+    return {
+        label: code ?? "unknown",
+        currency: "",
+        salary_min: null,
+        salary_note: null,
+        work_authorisation: "",
+    };
+}
+
+export function loadCountries(filePath = readCountriesPath()): CountriesFile {
+    const cached = countriesByPath.get(filePath);
+    if (cached) return cached;
+
+    let raw: string;
+    try {
+        raw = readFileSync(filePath, "utf8");
+    } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new ConfigError(
+            `Could not read the country profiles at "${filePath}": ${reason}\n` +
+                "Copy the one from the repository, or set JOB_TAILOR_COUNTRIES.",
+        );
+    }
+
+    let parsed: unknown;
+    try {
+        parsed = parseYaml(raw);
+    } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new ConfigError(`"${filePath}" is not valid YAML: ${reason}`);
+    }
+
+    const result = countriesFileSchema.safeParse(parsed);
+    if (!result.success) {
+        const issues = result.error.issues
+            .map((issue) => `  - ${issue.path.join(".") || "(root)"}: ${issue.message}`)
+            .join("\n");
+        throw new ConfigError(`"${filePath}" does not match the countries schema:\n${issues}`);
+    }
+
+    // Keyed by the normalised code from here on, so "de" and "DE" are one entry.
+    const countries: Record<string, CountryProfile> = {};
+    for (const [code, profile] of Object.entries(result.data.countries)) {
+        countries[normaliseCode(code)] = profile;
+    }
+
+    const file: CountriesFile = {default: normaliseCode(result.data.default), countries};
+    countriesByPath.set(filePath, file);
+    return file;
+}
+
+/** Test seam: forces the next lookup to re-read the file. */
+export function resetCountriesCache(): void {
+    countriesByPath.clear();
+    reportedUnconfigured.clear();
+}
+
+/**
+ * The profile for a job's country. A null code — the posting's location was
+ * ambiguous — and an unconfigured code both return the empty profile, which
+ * disables the salary check and says nothing about work authorisation.
+ */
+export function getCountryProfile(code: string | null): CountryProfile {
+    if (!code || !code.trim()) return unconfigured(null);
+
+    const key = normaliseCode(code);
+    const profile = loadCountries().countries[key];
+    if (profile) return profile;
+
+    if (!reportedUnconfigured.has(key)) {
+        reportedUnconfigured.add(key);
+        process.stderr.write(
+            `[job-tailor] ${key} is not configured in ${readCountriesPath()}: no salary ` +
+                "threshold and no work-authorisation statement will be applied.\n",
+        );
+    }
+    return unconfigured(key);
+}
+
+/**
+ * The work-authorisation statement for a country, or undefined when there is
+ * none. Undefined means the letter must say nothing about authorisation at all
+ * — an absent statement is never approximated from a neighbouring country.
+ */
+export function resolveWorkAuthorisation(country: string | null): string | undefined {
+    const statement = getCountryProfile(country).work_authorisation;
+    return statement.trim() ? statement : undefined;
+}
+
+/** JOB_TAILOR_DEFAULT_COUNTRY wins over `default` in the file. */
+export function readDefaultCountry(): string {
+    const override = env("JOB_TAILOR_DEFAULT_COUNTRY");
+    if (override) {
+        if (!/^[A-Za-z]{2}$/.test(override)) {
+            throw new ConfigError(
+                `JOB_TAILOR_DEFAULT_COUNTRY must be an ISO 3166-1 alpha-2 code, got "${override}".`,
+            );
+        }
+        return normaliseCode(override);
+    }
+    return loadCountries().default;
+}
+
+/* ------------------------------------------------------------------ */
 /* Job sources (phase 3)                                                */
 /* ------------------------------------------------------------------ */
 
@@ -119,6 +246,10 @@ export function readArbeitsagenturKey(): string | undefined {
 
 export function readCompaniesPath(): string {
     return env("JOB_TAILOR_COMPANIES") ?? "data/companies.yaml";
+}
+
+export function readCandidatesPath(): string {
+    return env("JOB_TAILOR_CANDIDATES") ?? DEFAULT_CANDIDATES_PATH;
 }
 
 export function readJobsDir(): string {

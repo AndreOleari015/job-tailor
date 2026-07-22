@@ -2,6 +2,7 @@ import pLimit from "p-limit";
 import type {PostingCache} from "./cache.js";
 import {applyQuery} from "./filter.js";
 import type {HttpClient} from "./http.js";
+import {detectLanguage} from "./language.js";
 import {normaliseWhitespace, withHeader} from "./text.js";
 import {SourceUnavailableError, type JobSource, type RawPosting, type SourceQuery} from "./types.js";
 
@@ -112,6 +113,7 @@ export function createArbeitsagenturSource(deps: ArbeitsagenturDeps): JobSource 
         const company = (detail.firma ?? hit.arbeitgeber)?.trim() || null;
         const location = locationOf(hit);
         const title = (detail.stellenangebotsTitel ?? hit.titel).trim();
+        const description = normaliseWhitespace(detail.stellenangebotsBeschreibung ?? "");
 
         return {
             sourceId,
@@ -122,11 +124,8 @@ export function createArbeitsagenturSource(deps: ArbeitsagenturDeps): JobSource 
             url: `https://www.arbeitsagentur.de/jobsuche/jobdetail/${encodeURIComponent(refnr)}`,
             postedAt:
                 detail.datumErsteVeroeffentlichung ?? hit.aktuelleVeroeffentlichungsdatum ?? null,
-            text: withHeader({
-                company,
-                location,
-                description: normaliseWhitespace(detail.stellenangebotsBeschreibung ?? ""),
-            }),
+            text: withHeader({company, location, description}),
+            language: detectLanguage(description, title),
             fetchedAt,
         };
     }

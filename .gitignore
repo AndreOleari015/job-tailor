@@ -16,6 +16,8 @@ cv.html
 COMANDOS.md
 # Local search state: fetched postings and the last search's ordering.
 data/postings.cache.json
+# Board tokens probed by `discover`; a dead slug is remembered for 30 days.
+data/discovery.cache.json
 # The tracker database: your real applications and their outcomes.
 data/tracker.db
 data/tracker.db-shm

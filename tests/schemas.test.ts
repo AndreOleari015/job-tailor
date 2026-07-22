@@ -18,6 +18,7 @@ const validJobSpec = {
     required_stack: ["React Native", "TypeScript"],
     nice_to_have: ["Fastlane"],
     salary_min_eur: 72000,
+    salary_currency: "EUR",
     visa_sponsorship: "explicit_yes",
     key_responsibilities: ["Ship features to the App Store"],
     tone: "startup",
@@ -43,7 +44,6 @@ const validProfile = {
         github: "github.com/example-user",
         linkedin: "linkedin.com/in/example-user",
         location: "Dublin, Ireland",
-        work_authorisation: {DE: "Eligible for the EU Blue Card.", IE: ""},
     },
     experience: [
         {
@@ -100,6 +100,11 @@ describe("jobSpecSchema", () => {
         const {tone: _tone, ...withoutTone} = validJobSpec;
         expect(jobSpecSchema.safeParse(withoutTone).success).toBe(false);
     });
+
+    it("defaults salary_currency to null, so a job.json written before it still parses", () => {
+        const {salary_currency: _dropped, ...legacy} = validJobSpec;
+        expect(jobSpecSchema.parse(legacy).salary_currency).toBeNull();
+    });
 });
 
 describe("tailoredApplicationSchema", () => {
@@ -138,30 +143,15 @@ describe("profileSchema", () => {
         expect(profileSchema.parse(validProfile).basics.name).toBe("Alex Moreira");
     });
 
-    it("rejects the old visa_note string shape with a readable error", () => {
-        const {work_authorisation: _dropped, ...basics} = validProfile.basics;
-        const legacy = {
+    it("no longer carries work authorisation, which is a property of the country", () => {
+        // The schema strips it silently; `loadProfile` is where a stale profile
+        // is caught and pointed at data/countries.yaml. That test lives in
+        // profile.test.ts, because it needs a file.
+        const stale = {
             ...validProfile,
-            basics: {...basics, visa_note: "Eligible for EU Blue Card under 18g AufenthG."},
+            basics: {...validProfile.basics, work_authorisation: {DE: "Eligible."}},
         };
-
-        const result = profileSchema.safeParse(legacy);
-        expect(result.success).toBe(false);
-
-        const issue = result.error?.issues.find((candidate) =>
-            candidate.path.join(".").includes("work_authorisation"),
-        );
-        expect(issue).toBeDefined();
-        expect(issue?.path.join(".")).toBe("basics.work_authorisation");
-        expect(issue?.message).toMatch(/expected record|received undefined|invalid/i);
-    });
-
-    it("rejects a work_authorisation entry that is not a string", () => {
-        const malformed = {
-            ...validProfile,
-            basics: {...validProfile.basics, work_authorisation: {DE: 42}},
-        };
-        expect(profileSchema.safeParse(malformed).success).toBe(false);
+        expect(profileSchema.parse(stale).basics).not.toHaveProperty("work_authorisation");
     });
 
     it("rejects a bullet without an id", () => {

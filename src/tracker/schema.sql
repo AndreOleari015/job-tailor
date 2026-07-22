@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS postings (
     -- different statement from a score of zero. Null sorts last.
     pre_score   INTEGER,
     raw_text    TEXT,
+    -- "de" | "en" | "unknown", from the deterministic check in sources/language.ts.
+    language    TEXT,
     status      TEXT NOT NULL DEFAULT 'new',
     out_dir     TEXT,
     match_score INTEGER,

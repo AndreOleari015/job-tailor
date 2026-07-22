@@ -75,6 +75,7 @@ export interface PostingRecord {
     fetchedAt: string | null;
     preScore: number | null;
     rawText: string | null;
+    language: string | null;
     status: Status;
     outDir: string | null;
     matchScore: number | null;
@@ -100,6 +101,7 @@ export interface UpsertPosting {
     fetchedAt: string;
     text: string;
     preScore?: number | null;
+    language?: string | null;
 }
 
 export interface GenerationResult {
@@ -138,6 +140,7 @@ interface Row {
     fetched_at: string | null;
     pre_score: number | null;
     raw_text: string | null;
+    language: string | null;
     status: string;
     out_dir: string | null;
     match_score: number | null;
@@ -173,6 +176,7 @@ function toRecord(row: Row): PostingRecord {
         fetchedAt: row.fetched_at,
         preScore: row.pre_score,
         rawText: row.raw_text,
+        language: row.language,
         status: isStatus(row.status) ? row.status : "new",
         outDir: row.out_dir,
         matchScore: row.match_score,
@@ -208,6 +212,27 @@ const ORDER_BY = `
 
 const SCHEMA_PATH = fileURLToPath(new URL("./schema.sql", import.meta.url));
 
+/**
+ * Columns added after a database already existed. `CREATE TABLE IF NOT EXISTS`
+ * does nothing to a table that is already there, so a new column has to be
+ * added by hand or every insert naming it fails on an existing tracker.
+ */
+const ADDED_COLUMNS: readonly {name: string; ddl: string}[] = [
+    {name: "language", ddl: "ALTER TABLE postings ADD COLUMN language TEXT"},
+];
+
+function migrate(db: Database.Database): void {
+    const present = new Set(
+        db
+            .prepare("PRAGMA table_info(postings)")
+            .all()
+            .map((row) => (row as {name: string}).name),
+    );
+    for (const column of ADDED_COLUMNS) {
+        if (!present.has(column.name)) db.exec(column.ddl);
+    }
+}
+
 export class TrackerStore {
     private constructor(private readonly db: Database.Database) {}
 
@@ -220,6 +245,7 @@ export class TrackerStore {
         const db = new Database(databasePath);
         db.pragma("journal_mode = WAL");
         db.exec(readFileSync(SCHEMA_PATH, "utf8"));
+        migrate(db);
         return new TrackerStore(db);
     }
 
@@ -246,12 +272,13 @@ export class TrackerStore {
         const insert = this.db.prepare(`
             INSERT INTO postings (
                 source_id, source, company, title, location, country, url,
-                posted_at, fetched_at, pre_score, raw_text, status, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)
+                posted_at, fetched_at, pre_score, raw_text, language, status, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)
             ON CONFLICT(source_id) DO UPDATE SET
                 fetched_at = excluded.fetched_at,
                 pre_score  = excluded.pre_score,
                 raw_text   = excluded.raw_text,
+                language   = excluded.language,
                 updated_at = excluded.updated_at
         `);
 
@@ -280,6 +307,7 @@ export class TrackerStore {
                     posting.fetchedAt,
                     posting.preScore ?? null,
                     posting.text,
+                    posting.language ?? null,
                     now,
                 );
             }

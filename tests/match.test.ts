@@ -11,7 +11,6 @@ const profile: Profile = {
         github: "",
         linkedin: "",
         location: "Dublin",
-        work_authorisation: {},
     },
     experience: [
         {
@@ -43,6 +42,7 @@ const baseJob: JobSpec = {
     required_stack: [],
     nice_to_have: [],
     salary_min_eur: null,
+    salary_currency: null,
     visa_sponsorship: "not_mentioned",
     key_responsibilities: [],
     tone: "startup",

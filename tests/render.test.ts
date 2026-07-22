@@ -27,6 +27,7 @@ const jobSpec: JobSpec = {
     required_stack: ["React Native", "TypeScript"],
     nice_to_have: [],
     salary_min_eur: 80000,
+    salary_currency: "EUR",
     visa_sponsorship: "not_mentioned",
     key_responsibilities: [],
     tone: "startup",

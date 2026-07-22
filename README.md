@@ -10,7 +10,7 @@
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" />
   <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A522-339933?logo=nodedotjs&logoColor=white" />
   <img alt="Providers" src="https://img.shields.io/badge/LLM-Gemini%20%7C%20Claude-8A2BE2" />
-  <img alt="Tests" src="https://img.shields.io/badge/tests-214%20passing-success" />
+  <img alt="Tests" src="https://img.shields.io/badge/tests-353%20passing-success" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue" />
 </p>
 
@@ -44,21 +44,25 @@ Written to:  output/kaufland-e-commerce-senior-react-native-engineer
 ```
 
 **Contents** — [Quick start](#quick-start) · [Commands](#commands) ·
-[Configuration](#configuration) · [Flags](#flags) · [Design notes](#design-notes) ·
-[Web interface](#web-interface) · [Architecture](#architecture) · [Tests](#tests) · [Roadmap](#roadmap)
+[Configuration](#configuration) · [Countries](#countries) · [Where a posting is](#where-a-posting-is) ·
+[German or English](#german-or-english) · [Discovery](#discovery-a-verification-problem-not-a-research-one) ·
+[Flags](#flags) · [Design notes](#design-notes) · [Web interface](#web-interface) ·
+[Architecture](#architecture) · [Tests](#tests) · [Roadmap](#roadmap)
 
 ## What it does
 
-1. **search** — collects postings from documented public job APIs and writes one to a job file,
+1. **discover** — finds which companies have a Greenhouse, Lever or Ashby board by probing
+   public endpoints, so `data/companies.yaml` is filled by verification rather than by hand.
+2. **search** — collects postings from documented public job APIs and writes one to a job file,
    in the same plain text a pasted posting has.
-2. **extract** — parses raw job-description text into a validated `JobSpec`: company, role,
+3. **extract** — parses raw job-description text into a validated `JobSpec`: company, role,
    country, required stack, salary, visa sponsorship, tone.
-3. **tailor** — picks which of your pre-written CV bullets fit that role, writes a headline, a
+4. **tailor** — picks which of your pre-written CV bullets fit that role, writes a headline, a
    profile summary and a cover letter, and returns an honest match score plus a blunt list of
    gaps.
-4. **render** — lays the selected bullets and the letter into a CV and cover letter as A4 PDFs,
+5. **render** — lays the selected bullets and the letter into a CV and cover letter as A4 PDFs,
    and refuses to produce either from an application still carrying a factual flag.
-5. **track** — a local web UI and a SQLite tracker over all of it, from first sighting to
+6. **track** — a local web UI and a SQLite tracker over all of it, from first sighting to
    outcome. It never submits anything.
 
 Every model response is validated with zod and repaired in-conversation on failure. Google
@@ -79,9 +83,9 @@ To skip that Chromium download and point at a browser you already have, set
 stable `id` — ids are the model's only handle on your history, and it can never rewrite the
 text behind one.
 
-Fill in `basics.work_authorisation` for every country you intend to apply in, keyed by ISO
-3166-1 alpha-2 code. **Leave an entry empty rather than approximating one:** an empty string
-means the letter says nothing about your status there, which is always safe.
+`data/countries.yaml` is the other file you edit by hand: one entry per market you target, with
+its salary threshold and the sentence you may truthfully say about your right to work there.
+See [Countries](#countries) — only Germany ships with a real figure, deliberately.
 
 ```bash
 npm run dev -- run job.txt        # from source
@@ -112,6 +116,7 @@ pbpaste | job-tailor extract -
   "required_stack": ["React Native", "TypeScript", "CI/CD"],
   "nice_to_have": ["Firebase"],
   "salary_min_eur": 42000,
+  "salary_currency": "EUR",
   "visa_sponsorship": "not_mentioned",
   "key_responsibilities": ["Ship mobile features", "Own the release pipeline"],
   "tone": "corporate"
@@ -167,8 +172,31 @@ $ job-tailor search engineer --source ashby --limit 5
   2   Nory          Senior Product Engineer - Insights   Dublin, Spain, London…  ashby      50
 ```
 
-`--source <name>` (repeatable), `--country`, `--location`, `--remote`, `--posted-within <days>`,
+`--source <name>` (repeatable), `--country`, `--location`, `--remote`,
+`--language <de|en|unknown>` (repeatable), `--english`, `--posted-within <days>`,
 `--limit <n>` (50), `--refresh`, `--json`.
+
+> **`discover --country` filters companies; `search --country` filters postings.** They are
+> different questions and they take the same flag, so it is worth saying plainly. A company
+> headquartered in Germany posts roles in Lisbon, Dublin and San Francisco — `discover --country
+> DE` decides *whose boards to probe*, `search --country DE` decides *which postings are
+> actually in Germany*, judged on the posting's own location field. Nothing about the company's
+> entry in `candidates.yaml` or `companies.yaml` reaches the search filter.
+
+```console
+$ job-tailor search engineer --country de --limit 3
+
+  #   COMPANY         TITLE                                LOCATION          SOURCE      LANG  PRE
+  1   GetYourGuide    Connectivity Partner Program Manager Berlin            greenhouse  en    100
+  2   HelloFresh      Director UX Design                   Berlin, Germany   greenhouse  en    100
+  3   SumUp           Senior Analytics Engineer            Berlin, Germany   greenhouse  en    100
+
+Filtered to Germany: 58 of 311 postings matched.
+```
+
+Those last lines are there so a zero-result search is obviously the filter working and not a
+source breaking. See [Where a posting is](#where-a-posting-is) for how the matching works, and
+[German or English](#german-or-english) for the `LANG` column.
 
 The pre-score is `preScore()` from `core/match.ts` against a lightweight JobSpec built from the
 technologies the posting names. It is an ordering hint, nothing more — a `—` means the posting
@@ -202,6 +230,61 @@ Prints the tracker's counts and the gaps that come up most often — the same fi
 ### `job-tailor sources`
 
 Lists each source, whether its credentials are present, and the board tokens configured for it.
+
+### `job-tailor discover`
+
+Finds board tokens for the companies in `data/candidates.yaml` by probing the public board
+endpoints. See [Discovery](#discovery).
+
+```console
+$ job-tailor discover --country IE
+
+Probing 9 companies (9 slugs) against greenhouse, lever, ashby. Cached results are not re-probed.
+16 probes sent, 5 boards reported (>= 1 matching).
+COMPANY                 CC    BOARD        TOKEN                 TOTAL  MATCH  SAMPLE TITLE
+-------------------------------------------------------------------------------------------
+Stripe                  IE    greenhouse   stripe                  525     52  AI Engineer
+Intercom                IE    greenhouse   intercom                130     13  AI Infrastructure Engineer
+Tines                   IE    greenhouse   tines                    22      6  Engineering Manager - Government Cloud
+Nory                    IE    ashby        nory                      7      4  Senior Product Designer – Inventory
+Wayflyer                IE    ashby        wayflyer                 15      3  Frontend Software Engineer
+```
+
+`--input <path>`, `--country <code>` (repeatable), `--board <name>` (repeatable),
+`--min-matching <n>`, `--refresh`, `--write`, `--json`.
+
+`--write` appends the confirmed tokens to `data/companies.yaml`, where `search` picks them up.
+
+### `job-tailor probe <board> <token>`
+
+One token, verbosely — for checking a company by hand. Exits non-zero when the token does not
+resolve to a board.
+
+```console
+$ job-tailor probe ashby nory
+
+Board:       ashby
+Token:       nory
+Valid:       yes
+Postings:    7
+Matching:    4
+```
+
+### `job-tailor countries`
+
+Lists the configured markets, so it is obvious at a glance which ones are ready to target.
+
+```console
+$ job-tailor countries
+
+CODE    COUNTRY           THRESHOLD         AUTHORISATION
+---------------------------------------------------------
+DE *    Germany           EUR 45,934        present
+ES      Spain             not set           none
+IE      Ireland           not set           none
+NL      Netherlands       not set           none
+PT      Portugal          not set           none
+```
 
 ### `job-tailor render <output-dir>`
 
@@ -253,6 +336,9 @@ diff -r output/acme-*/            # compare the two cover letters
 | `ARBEITSAGENTUR_API_KEY`   | —                   | Public client key for the German job board source.   |
 | `ADZUNA_APP_ID` / `_KEY`   | —                   | Adzuna account; without both, the source is skipped. |
 | `JOB_TAILOR_COMPANIES`     | `data/companies.yaml` | Board tokens `search` watches.                     |
+| `JOB_TAILOR_COUNTRIES`     | `data/countries.yaml` | Salary thresholds and authorisation statements.    |
+| `JOB_TAILOR_DEFAULT_COUNTRY` | from the file     | Overrides `default:` in `countries.yaml`.            |
+| `JOB_TAILOR_CANDIDATES`    | `data/candidates.yaml` | Companies worth checking, by country.             |
 | `JOB_TAILOR_JOBS_DIR`      | `jobs`              | Where `pull` writes job files.                       |
 | `DEBUG`                    | —                   | `1` logs usage, writes transcripts, full traces.     |
 
@@ -262,6 +348,58 @@ so a cheap model can do extraction while a stronger one writes the letter:
 ```bash
 JOB_TAILOR_EXTRACT_MODEL=gemini-2.5-flash JOB_TAILOR_TAILOR_MODEL=gemini-2.5-pro job-tailor run job.txt
 ```
+
+## Countries
+
+Two things about an application depend on **where the job is**, and neither can be inferred:
+the salary an offer has to clear, and what you may truthfully say about your right to work
+there. Both live in `data/countries.yaml`, one entry per market:
+
+```yaml
+default: DE
+
+countries:
+  DE:
+    label: Germany
+    currency: EUR
+    salary_min: 45934
+    salary_note: "EU Blue Card, shortage occupation, 2026"
+    work_authorisation: >-
+      Eligible for the EU Blue Card under section 18g AufenthG as an IT
+      specialist, based on 4+ years of professional software experience.
+  IE:
+    label: Ireland
+    currency: EUR
+    salary_min: null        # no figure looked up yet — check disabled
+    work_authorisation: ""  # nothing to say — so say nothing
+```
+
+**A null threshold disables the check. It is never read as zero.** That is the entire point of
+the field being nullable: a €38,000 role in Lisbon measured against a German Blue Card figure
+tells you nothing, and a missing figure silently defaulting to zero would tell you less. No
+figure means no claim.
+
+**Only `DE` ships with a real number, on purpose.** Every other threshold is `null` and every
+other authorisation statement is empty. A stale immigration figure is worse than no figure —
+it looks checked. Look yours up from the national immigration authority, not a blog, and type
+it in. `salary_note` is where you record which rule the number came from, so whoever updates it
+next year knows what they are updating.
+
+The work-authorisation rule from phase 1.6 is unchanged, only its home moved out of
+`data/profile.yaml`: an empty entry, a missing country, and a posting whose country could not
+be determined all mean **the letter says nothing about visas, permits or residence status.**
+See [Omission beats an inapplicable statement](#omission-beats-an-inapplicable-statement).
+
+An unconfigured country code is allowed, not an error: it gets no threshold and no statement,
+and says so once on stderr. `JOB_TAILOR_DEFAULT_COUNTRY` overrides `default`.
+
+Currencies are compared, never converted. If a posting quotes GBP against a EUR market, the
+threshold check does not run — `SALARY_CURRENCY_MISMATCH` is raised and you check by hand.
+Converting at a rate the posting never stated would manufacture a number nobody can verify.
+
+`data/candidates.yaml` is the companion list of companies worth checking, grouped by country so
+one file serves several markets. It ships as a seed of ~55 European employers; edit it freely,
+since being wrong about a company costs you one skimmed posting.
 
 ## Flags
 
@@ -273,7 +411,8 @@ discarded.
 | `LOW_MATCH`                      | `match_score < 50`.                                              |
 | `NO_SPONSORSHIP`                 | Posting says visa sponsorship is not available.                  |
 | `LANGUAGE_RISK`                  | Application language is neither `en` nor `pt`.                   |
-| `SALARY_BELOW_THRESHOLD`         | Stated salary is below €45,934/year.                             |
+| `SALARY_BELOW_THRESHOLD`         | Stated salary is below the target country's threshold.           |
+| `SALARY_CURRENCY_MISMATCH`       | Salary is quoted in another currency; check it by hand.          |
 | `INVALID_BULLET_IDS_DROPPED`     | The model referenced bullets that do not exist.                  |
 | `UNEXPECTED_AUTHORISATION_CLAIM` | The letter claims work authorisation that does not apply there.  |
 | `MISSING_AUTHORISATION_CLAIM`    | A statement applies to this country but the letter omits it.     |
@@ -315,12 +454,15 @@ The first real run closed an Irish cover letter with "I am eligible for an EU Bl
 section 18g AufenthG" — German immigration law, quoted at an employer in Cork. The profile held
 work authorisation as one string, so there was only ever one thing to say.
 
-It is now a map keyed by country, and the rule is asymmetric on purpose:
+It is now one statement per country in `data/countries.yaml`, and the rule is asymmetric on
+purpose:
 
 ```yaml
-work_authorisation:
-  DE: "Eligible for the EU Blue Card under section 18g AufenthG…"
-  IE: ""      # nothing to say — so say nothing
+countries:
+  DE:
+    work_authorisation: "Eligible for the EU Blue Card under section 18g AufenthG…"
+  IE:
+    work_authorisation: ""   # nothing to say — so say nothing
 ```
 
 An empty entry, a missing entry, or a job whose country could not be determined all mean the
@@ -517,7 +659,8 @@ and 5xx, and runs under a global concurrency limit of 3.
 
 The board sources are per-company, not search engines: you list board tokens in
 `data/companies.yaml` and the keyword filtering happens client-side. The aggregators take the
-query itself.
+query itself. `job-tailor discover` fills that token list for you — see
+[Discovery](#discovery-a-verification-problem-not-a-research-one).
 
 **Every automated posting flows through the same path as a pasted one.** A fetched posting is
 converted to plain text — paragraphs as blank lines, list items as `- ` lines — with the
@@ -540,6 +683,164 @@ Fetched postings are cached in `data/postings.cache.json`, keyed by source id an
 returns metadata only, that saves a detail request per result. `--refresh` bypasses it. The same
 role often appears on both a board and an aggregator; dedupe by normalised company + title +
 location keeps the board copy, since its text is complete.
+
+### Where a posting is
+
+`search --country de` used to return Lisbon, Dublin, San Francisco, Warsaw and "US Remote". The
+board sources have no country parameter at all, so the flag was quietly doing nothing to them —
+and because the boards had been found with `discover --country DE`, the results *looked* filtered
+by country while actually being filtered by **whose board it was**. A company headquartered in
+Germany posts roles worldwide. Those are different questions.
+
+The filter reads the posting's own `location` field, in `src/sources/location.ts`:
+
+- **`matchesCountry`** compares against a hand-written vocabulary of each country's names and the
+  cities that actually appear in postings — a board writes "Munich", never "DE". Case- and
+  diacritic-insensitive, so `München`, `Munchen` and `MUNICH` are one place, and whole-token, so
+  `UK` does not match `Ukraine`. Ireland explicitly excludes "Northern Ireland".
+- **A null or empty location never matches.** An unstated location is not evidence of anything,
+  and treating it as a match is exactly how San Francisco ends up in a German search.
+- **`--remote` with `--country`** also keeps a role open to a region containing the country —
+  "Remote (Europe)", "EMEA Remote", "Remote — Anywhere". A bare "US Remote" does not pass
+  `--country de`. The United Kingdom is deliberately not inside `EU` or `EEA` scopes; that is a
+  work-authorisation fact, not pedantry.
+- **`--remote` alone** keeps anything remote. **`--location`** is unchanged: substring match.
+- **A country the vocabulary does not know warns and filters nothing**, rather than silently
+  returning an empty table. Extending it is a one-line edit to that file, which is the point of
+  it being a plain list.
+
+**Every source is filtered here, aggregators included.** They were exempt at first, on the
+assumption that a source taking a country parameter had already answered the question. The
+Bundesagentur does not: its index carries Austrian listings, and `search softwareentwickler
+--country de` came back as Vienna, Linz, Graz, Innsbruck and Salzburg. A source's own filter is a
+bandwidth optimisation and never a correctness guarantee. The cost of the rule is stated rather
+than hidden: an aggregator row whose location is "Home Office" no longer passes a country filter,
+because a match nobody can confirm is not a match.
+
+Austria and Switzerland are in the vocabulary for the same reason — German-language postings from
+all three countries are interleaved in the same feeds, so DE cannot be told from AT without
+knowing what AT looks like. The German and Austrian **states** matter more than the cities: the
+Bundesagentur writes every location as "Ort, Bundesland", so without all sixteen Länder a real
+posting in "Burgwedel, Niedersachsen" reads as nowhere and is dropped from a German search — the
+mirror image of the leak, and just as wrong.
+
+**Ambiguity is a property of a place name, not of a location string.** A posting listing
+"Berlin, Germany; Dublin, Ireland" is not ambiguous — it is open in two countries, and it matches
+both. Only a single name that genuinely belongs to more than one country is ambiguous, and only
+while nothing else in the string settles it: **Freiburg** is a city in Baden-Württemberg and a
+canton in Switzerland, so `Freiburg` alone is withheld and counted, while `Freiburg im Breisgau,
+Baden-Württemberg` is German because the state says so.
+
+```
+Filtered to Germany: 158 of 1369 postings matched.
+1 named Germany alongside another country and were withheld rather than guessed at.
+```
+
+Withheld postings are counted because a silent drop looks identical to a source failing. The
+count should sit near zero; if it climbs, a place name is missing from the map.
+
+### German or English
+
+The target market is two populations wearing one coat: international companies posting in English,
+which sponsor work permits as a matter of routine, and domestic postings in German, most of which
+expect fluent German. Reading one undifferentiated list is how you spend an evening on roles you
+cannot apply for.
+
+Every posting carries `language`, from `src/sources/language.ts`: count the high-frequency
+function words of each language — `und`/`der`/`für` against `and`/`the`/`for` — and take the
+larger, or `unknown` when there is too little prose or the two are within 20% of each other.
+Function words, not content words, because a German software posting is full of "Developer",
+"Cloud" and "Agile".
+
+It is deliberately not a model call. This runs on every row of every search, and a search that
+costs money is a search you stop running.
+
+`(m/w/d)` and `(w/m/d)` — the German gender markers — are weighted at about three function words
+rather than being decisive, because German employers put them in the titles of English postings
+too. The tokeniser splits on Unicode letters rather than using `\b`, which is ASCII-only in
+JavaScript and would silently miss `über` and `für`.
+
+`--language de|en|unknown` (repeatable) and `--english` filter on it, there is a `LANG` column in
+the table, and a country search whose results are more than 60% one language says so:
+
+```
+73 of 92 postings are in German. Use --english to see only English-language postings.
+```
+
+### Discovery: a verification problem, not a research one
+
+The board sources are per-company: they need a token like `nory` or `stripe`, the slug in the
+board URL. There is no directory of these anywhere. But the endpoints are public and cheap, and
+a token either resolves to a job board or it does not — so finding tokens is **verification**,
+not research. `discover` guesses slugs from the company name and asks.
+
+Four guesses per name, in order, deduplicated:
+
+| Rule | `N26 GmbH` | `Trade Republic` |
+| ---- | ---------- | ---------------- |
+| strip everything non-alphanumeric | `n26gmbh` | `traderepublic` |
+| strip a legal suffix first (`gmbh`, `ag`, `se`, `bv`, `ltd`…) | `n26` | — |
+| hyphenate word boundaries | `n26-gmbh` | `trade-republic` |
+| first word only | — | `trade` |
+
+`GetYourGuide` collapses to a single candidate, so it costs one request. A company stops the
+moment any board answers: at most twelve requests, in practice one to three. Pin the token
+yourself with a `slugs:` list on the candidate when the guesses all miss.
+
+**A guessed slug can land on someone else's board**, which would quietly pour a stranger's jobs
+into your searches. The board's own company name is the only evidence available, so any
+disagreement is printed under the table — `greenhouse:intercom` reports itself as "Fin" — and
+`--write` records the name *you* listed, never the board's.
+
+**Invalid tokens are cached, and that is the point.** `data/discovery.cache.json` keeps a dead
+slug for 30 days and a live board for 7; without it, every re-run re-probes hundreds of slugs
+that were dead the first time. A live board expires sooner because its job counts move. Changing
+your keywords is a cache miss for hits, since the counts were computed against the old ones —
+stale counts would be worse than another request. A network failure is never cached: it says
+nothing about the token, and one bad moment must not blacklist a real board. `--refresh` ignores
+all of it.
+
+An empty board counts as invalid. A real company with no open postings is indistinguishable from
+a wrong slug, and worth nothing to `search` either way.
+
+**These are third-party endpoints, so probing is deliberately slow.** The phase-3 User-Agent,
+the same global concurrency of 3, a minimum 250ms between requests to the same board host, a
+60-second stand-down for a board that answers 429, and a hard cap of 500 probes per invocation
+that halts the run with a message rather than continuing quietly.
+
+`data/candidates.yaml` is expected to be edited by hand over time — it is a list of employers
+you would actually join, and it ships seeded rather than empty only so the first run has
+something to do. Delete what you would never work for; add what you would.
+
+### Whole words, and the title carries the weight
+
+`search react native typescript` used to return "Senior CRM Strategy Manager, Reactivations" at
+pre-score 100. Two separate mistakes were stacked on top of each other.
+
+The first was substring matching: `react` is inside `reactivation`, `proactive` and `reactive`.
+Keyword matching now runs on **whole tokens**, in `src/core/terms.ts` — Unicode letter/digit runs,
+not `\b`, which is ASCII-only in JavaScript and would break on the German half of this market.
+A multi-word keyword keeps its order-independent semantic ("mobile entwickler" finds "Entwickler
+für mobile Systeme"), but every one of its words must now land on a whole token.
+
+Technologies whose meaning lives in punctuation get an explicit table rather than a special case
+at each call site: `.NET` survives inside `ASP.NET`, `C#` and `C++` stay distinct instead of both
+collapsing to `c`, and `Node.js` matches text spelling it `nodejs`. The spelling aliases that
+`preScore` already used are the same table, so a posting writing TypeScript as `TS` is found.
+
+The second mistake was treating every mention as equal. A posting can name TypeScript once in a
+paragraph about the engineering culture and still be an Account Executive role. So:
+
+- a technology in the **title** counts double — it is what the role *is*;
+- one only in the **body** counts single;
+- and if the title names none at all, the pre-score is **capped at 40**, however much boilerplate
+  the body contains.
+
+The weighting is not a new scoring rule: title matches become `required_stack` and body-only ones
+`nice_to_have`, which `preScore` already weights 2 against 1. Measured over the same 289 postings,
+substring matching returned 60 and whole-token matching returns 52 — nine false positives removed,
+one recovered by the alias table. It is still a crude ordering hint, still deterministic, still
+free.
 
 ### A cheap filter before an expensive call
 
@@ -578,7 +879,7 @@ gitignored. With `DEBUG` unset, no directory is created and no write is attempte
 ```
 src/
 ├── cli.ts            commands, stdin/file I/O, --provider, error formatting
-├── config.ts         all environment resolution: provider, per-task model, keys
+├── config.ts         environment resolution + country profiles from countries.yaml
 ├── types.ts          every zod schema and inferred type
 ├── llm/
 │   ├── client.ts     callJson: fence stripping, validation, repair loop, DEBUG transcript
@@ -592,16 +893,21 @@ src/
 │   ├── extract.ts    job text  -> JobSpec
 │   ├── tailor.ts     profile + JobSpec -> TailoredApplication, reconciliation
 │   ├── match.ts      deterministic keyword pre-score, the cheap pre-filter
+│   ├── terms.ts      whole-token matching, spelling aliases, C#/.NET/Node.js
 │   ├── render.ts     selection + templates -> HTML -> PDF, refusal rules
 │   └── slug.ts       company/role/name slugs, shared by dirs and filenames
 ├── sources/
 │   ├── types.ts      RawPosting, SourceQuery, JobSource
 │   ├── http.ts       User-Agent, 20s timeout, Retry-After, backoff, concurrency 3
 │   ├── text.ts       HTML -> the plain text the extract prompt was tuned on
+│   ├── location.ts   country/city/state vocabulary: where a posting actually is
+│   ├── language.ts   de/en/unknown from function-word frequency, no model call
 │   ├── board.ts      shared per-company-board runner
 │   ├── greenhouse.ts / lever.ts / ashby.ts      company boards, full text
 │   ├── adzuna.ts / arbeitsagentur.ts            aggregators
-│   ├── cache.ts      postings by sourceId, 30-day eviction, last-search order
+│   ├── candidates.ts companies worth checking, by country
+│   ├── discover.ts   board-token probing: slug guesses, pacing, probe budget
+│   ├── cache.ts      postings by sourceId + probed tokens, with eviction
 │   ├── registry.ts   name -> source
 │   └── index.ts      searchAll(), fetchPosting(), dedupe, pre-scoring
 ├── tracker/
@@ -618,6 +924,12 @@ templates/            the single source of visual truth
 ├── base-styles.hbs   fonts, margins, header block — shared by both documents
 ├── cv.hbs
 └── cover-letter.hbs
+
+data/                 everything you edit by hand
+├── profile.yaml      your CV as tagged bullets (gitignored; .example is the template)
+├── countries.yaml    per-market salary threshold + work-authorisation statement
+├── candidates.yaml   companies worth checking, grouped by country
+└── companies.yaml    board tokens `search` fetches
 ```
 
 Every phase is now implemented; nothing throws `NotImplemented`.
@@ -629,7 +941,7 @@ npm test          # tsc, then vitest
 npm run test:watch
 ```
 
-214 tests. All but one make no network call and drive no browser. They cover the zod schemas
+353 tests. All but one make no network call and drive no browser. They cover the zod schemas
 against valid and malformed fixtures, the `callJson` retry loop against mocked SDKs, provider and
 per-task model resolution, the `ConfigError` for each provider's missing key, Gemini's backoff
 and quota handling, the JSON Schema conversion, the `DEBUG=1` transcript (written when set,
@@ -637,11 +949,37 @@ absent when not), `data/profile.example.yaml` against the `Profile` schema, the 
 rules, per-country work authorisation, the cover-letter reference/length/paragraph checks,
 unsupported technology claims, the `Company:` header override, and the low-match short-circuit.
 
+The country profiles have their own suite: that a null threshold never fires
+`SALARY_BELOW_THRESHOLD` and is never read as zero, that Germany's fires at €45,933 and not at
+€45,934, that a GBP salary raises `SALARY_CURRENCY_MISMATCH` instead of being converted, that an
+unconfigured code warns exactly once and does not throw, that a `data/profile.yaml` still
+carrying `basics.work_authorisation` fails with a message naming the new location, and that both
+`countries.yaml` and `candidates.yaml` parse against their schemas.
+
 The tracker and the server are tested with an in-memory database and `fastify.inject()`: every
 legal status transition and every illegal one, that an outcome is refused before you have
 applied, the list ordering, that the file route rejects `../` and absolute paths, that saving an
 edited letter re-renders **without** the model being called, that the generation queue
 serialises, and that gap frequency aggregates correctly.
+
+Term matching has its own suite: that "react" is not found in "Reactivation", "proactive" or
+"reactive" but is found in "react-native", that `.NET` survives inside `ASP.NET` and `C#` never
+matches `C++`, that `Node.js` matches text spelling it `nodejs`, that a body-only posting is
+capped at 40, and that a title match outscores the same term in the body.
+
+Location and language filtering have their own suite: the country vocabulary against cities,
+states, diacritics, case and whole-token boundaries, that a null location never matches, that
+`--country de --remote` keeps "Remote Europe" and rejects "US Remote", that "Wien, Landstraße"
+and "Zürich" do not pass a German filter while every Bundesland does, that a posting listing
+Berlin and Dublin matches both while a bare "Freiburg" is withheld and counted, that aggregators
+are country-filtered like everything else, and that language detection separates a German posting from an English one without
+`(m/w/d)` alone deciding it.
+
+Discovery is tested with a stubbed fetch and no live call: slug generation for each rule, that a
+404 is not retried, that keyword counting is right, that a company stops at its first hit, that
+the negative cache prevents a re-probe and `--refresh` overrides it, that a transport failure is
+never cached, that the probe cap halts the run with one message, and that `--write` appends to
+`companies.yaml` without disturbing existing entries or comments.
 
 The sources are tested against fixtures recorded from the real APIs, with no live call in the
 suite: each source parses into well-formed postings, HTML becomes the expected plain-text shape,
@@ -670,7 +1008,12 @@ browser.
 | 1.7   | cover-letter quality fixes from the second real run         | Done   |
 | 2     | keyword pre-filter, CV/letter PDF rendering with refusal rules | Done |
 | 3     | job-board ingestion from documented public APIs             | Done   |
+| 3.5   | board-token discovery by probing public endpoints           | Done   |
 | 4     | local web UI + SQLite application tracking                  | Done   |
+| 3.6   | country profiles: per-market salary threshold + authorisation | Done |
+| 3.7   | location filtering: `search --country` reads the posting, not the company | Done |
+| 3.8   | DACH disambiguation, posting language, multi-word keyword matching | Done |
+| 3.9   | whole-token keywords, title weighting, multi-location postings | Done |
 
 ## License
 

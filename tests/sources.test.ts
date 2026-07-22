@@ -216,6 +216,7 @@ describe("arbeitsagentur", () => {
             company: "Cached GmbH",
             title: "Cached role",
             location: "Berlin",
+            language: "de",
             url: "https://example.invalid",
             postedAt: null,
             text: "Company: Cached GmbH\n\nCached body.\n",
@@ -332,6 +333,7 @@ function posting(over: Partial<RawPosting> & {sourceId: string; source: string})
         url: "https://example.invalid",
         postedAt: null,
         text: "Company: Meridian\n\nReact Native and TypeScript.\n",
+        language: "en",
         fetchedAt: new Date().toISOString(),
         ...over,
     };

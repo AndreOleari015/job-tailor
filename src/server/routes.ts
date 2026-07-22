@@ -111,6 +111,7 @@ export function registerRoutes(
                 fetchedAt: posting.fetchedAt,
                 text: posting.text,
                 preScore: posting.preScore,
+                language: posting.language,
             })),
         );
 

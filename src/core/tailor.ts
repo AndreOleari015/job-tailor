@@ -1,7 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import {readFile} from "node:fs/promises";
 import {parse as parseYaml} from "yaml";
-import {SALARY_THRESHOLD_EUR} from "../config.js";
+import {getCountryProfile, readCountriesPath, resolveWorkAuthorisation} from "../config.js";
 import {callJson} from "../llm/client.js";
 import type {LlmProvider} from "../llm/providers/index.js";
 import {tailoringPrompt} from "../llm/prompts.js";
@@ -10,7 +10,6 @@ import {
     collectSkills,
     flags,
     profileSchema,
-    resolveWorkAuthorisation,
     tailoredApplicationSchema,
     type JobSpec,
     type Profile,
@@ -22,6 +21,14 @@ export interface TailorOptions {
     client?: Anthropic;
     model?: string;
     maxRetries?: number;
+}
+
+/** True when a profile still carries the pre-3.6 `basics.work_authorisation` map. */
+function hasLegacyWorkAuthorisation(parsed: unknown): boolean {
+    if (!parsed || typeof parsed !== "object") return false;
+    const {basics} = parsed as {basics?: unknown};
+    if (!basics || typeof basics !== "object") return false;
+    return "work_authorisation" in basics;
 }
 
 /** Reads and validates the YAML profile. Throws a readable error on any failure. */
@@ -42,6 +49,18 @@ export async function loadProfile(profilePath: string): Promise<Profile> {
         throw new Error(`"${profilePath}" is not valid YAML: ${reason}`);
     }
 
+    // Zod strips unknown keys, so a profile still holding the phase-1.6 map
+    // would parse cleanly and silently stop saying anything about visas. The
+    // statement has moved; say where, rather than losing it quietly.
+    if (hasLegacyWorkAuthorisation(parsed)) {
+        throw new Error(
+            `"${profilePath}" still has basics.work_authorisation. It moved to ` +
+                `${readCountriesPath()}, one statement per country under ` +
+                "countries.<CODE>.work_authorisation. Copy each entry across and delete " +
+                "the block from the profile.",
+        );
+    }
+
     const result = profileSchema.safeParse(parsed);
     if (!result.success) {
         const issues = result.error.issues
@@ -58,8 +77,23 @@ export function computeFlags(jobSpec: JobSpec, matchScore: number): string[] {
     if (matchScore < 50) computed.push(flags.lowMatch);
     if (jobSpec.visa_sponsorship === "explicit_no") computed.push(flags.noSponsorship);
     if (jobSpec.language !== "en" && jobSpec.language !== "pt") computed.push(flags.languageRisk);
-    if (jobSpec.salary_min_eur !== null && jobSpec.salary_min_eur < SALARY_THRESHOLD_EUR) {
-        computed.push(flags.salaryBelowThreshold);
+
+    // The threshold is a property of the country, not of the tool. Without a
+    // figure for this one there is nothing to compare against, and a missing
+    // figure is never read as zero — silence beats a number nobody checked.
+    const country = getCountryProfile(jobSpec.country);
+    const salary = jobSpec.salary_min_eur;
+    if (salary !== null && country.salary_min !== null) {
+        // No currency on the spec means it predates country profiles, when EUR
+        // was the only figure that could arrive.
+        const currency = (jobSpec.salary_currency ?? country.currency).trim().toUpperCase();
+        if (currency !== country.currency.trim().toUpperCase()) {
+            // Converting would invent a rate the posting never stated, so the
+            // comparison is handed back to the operator instead.
+            computed.push(flags.salaryCurrencyMismatch);
+        } else if (salary < country.salary_min) {
+            computed.push(flags.salaryBelowThreshold);
+        }
     }
     return computed;
 }
@@ -208,7 +242,7 @@ export function reconcile(
     // A work-authorisation statement must match the job's country exactly, or
     // be absent entirely. Saying nothing is always safe; saying the wrong
     // thing is a false claim on a document sent to an employer.
-    const expected = resolveWorkAuthorisation(profile, jobSpec.country);
+    const expected = resolveWorkAuthorisation(jobSpec.country);
     if (expected) {
         if (!normalise(letter).includes(normalise(expected))) {
             merged.add(flags.missingAuthorisationClaim);

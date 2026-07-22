@@ -1,5 +1,6 @@
 import {createBoardSource, type BoardAdapter, type BoardDeps} from "./board.js";
 import type {BoardEntry} from "./companies.js";
+import {detectLanguage} from "./language.js";
 import {htmlToText, normaliseWhitespace, withHeader} from "./text.js";
 import type {JobSource, RawPosting} from "./types.js";
 
@@ -58,6 +59,7 @@ export const leverAdapter: BoardAdapter = {
 
         return postings.flatMap((posting) => {
             if (!posting.id || !posting.text) return [];
+            const description = fullDescription(posting);
 
             // Lever's payload never names the employer; the config does.
             const company = entry.label?.trim() || entry.token;
@@ -74,7 +76,8 @@ export const leverAdapter: BoardAdapter = {
                     postedAt: posting.createdAt
                         ? new Date(posting.createdAt).toISOString()
                         : null,
-                    text: withHeader({company, location, description: fullDescription(posting)}),
+                    text: withHeader({company, location, description}),
+                    language: detectLanguage(description, posting.text),
                     fetchedAt,
                 },
             ];

@@ -1,4 +1,5 @@
 import {collectBullets, collectSkills, type JobSpec, type Profile} from "../types.js";
+import {formsOf, normaliseTerm} from "./terms.js";
 
 /**
  * A deterministic, zero-cost pre-filter, computed before the tailoring call so
@@ -15,39 +16,9 @@ export interface PreScore {
     missingTerms: string[];
 }
 
-const REQUIRED_WEIGHT = 2;
-const NICE_TO_HAVE_WEIGHT = 1;
-
-/**
- * Spelling variants of the same term, not synonyms. Every group here is a
- * different way of writing one technology; nothing semantic belongs in it.
- * Firebase is not AWS, and no alias will ever say otherwise.
- */
-const ALIASES: Record<string, string[]> = {
-    "react native": ["react-native", "rn"],
-    "node.js": ["node", "nodejs"],
-    typescript: ["ts"],
-    "ci/cd": ["ci-cd", "cicd"],
-    "rest apis": ["rest"],
-};
-
-/** Every spelling of a term, keyed by each of its spellings. */
-const EQUIVALENTS = new Map<string, readonly string[]>(
-    Object.entries(ALIASES).flatMap(([canonical, aliases]) => {
-        const group = [canonical, ...aliases];
-        return group.map((form) => [form, group] as const);
-    }),
-);
-
-function normalise(term: string): string {
-    return term.replace(/\s+/g, " ").trim().toLowerCase();
-}
-
-/** The term itself plus its other spellings. Never a semantic expansion. */
-function formsOf(term: string): readonly string[] {
-    const normalised = normalise(term);
-    return EQUIVALENTS.get(normalised) ?? [normalised];
-}
+/** A title match is worth two body matches; see `lightweightSpec`. */
+export const REQUIRED_WEIGHT = 2;
+export const NICE_TO_HAVE_WEIGHT = 1;
 
 /** Everything the profile claims: declared skills plus every bullet tag. */
 function candidateTerms(profile: Profile): Set<string> {
@@ -72,7 +43,7 @@ interface Requirement {
 function requirements(jobSpec: JobSpec): Map<string, Requirement> {
     const collected = new Map<string, Requirement>();
     const add = (term: string, weight: number): void => {
-        const key = normalise(term);
+        const key = normaliseTerm(term);
         if (!key || collected.has(key)) return;
         collected.set(key, {display: term.trim(), weight});
     };

@@ -44,6 +44,7 @@ const jobSpec: JobSpec = {
     required_stack: ["React Native"],
     nice_to_have: [],
     salary_min_eur: null,
+    salary_currency: null,
     visa_sponsorship: "not_mentioned",
     key_responsibilities: [],
     tone: "startup",
@@ -111,7 +112,7 @@ function fakePipeline(over: Partial<Pipeline> = {}): {pipeline: Pipeline; calls:
         },
         async search() {
             calls.search += 1;
-            return {postings: [], warnings: []};
+            return {postings: [], warnings: [], languages: {de: 0, en: 0, unknown: 0}};
         },
         ...over,
     };
@@ -401,6 +402,7 @@ describe("POST /api/search", () => {
                         } as never,
                     ],
                     warnings: ["adzuna needs credentials"],
+                    languages: {de: 0, en: 1, unknown: 0},
                 };
             },
         });

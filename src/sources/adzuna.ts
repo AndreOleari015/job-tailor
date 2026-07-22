@@ -1,5 +1,6 @@
 import {applyQuery} from "./filter.js";
 import type {HttpClient} from "./http.js";
+import {detectLanguage} from "./language.js";
 import {normaliseWhitespace, withHeader} from "./text.js";
 import {SourceUnavailableError, type JobSource, type RawPosting, type SourceQuery} from "./types.js";
 
@@ -77,6 +78,7 @@ export function createAdzunaSource(deps: AdzunaDeps): JobSource {
 
                 const company = result.company?.display_name?.trim() || null;
                 const location = result.location?.display_name?.trim() || null;
+                const description = normaliseWhitespace(result.description ?? "");
 
                 return [
                     {
@@ -87,11 +89,8 @@ export function createAdzunaSource(deps: AdzunaDeps): JobSource {
                         location,
                         url: result.redirect_url ?? "",
                         postedAt: result.created ?? null,
-                        text: withHeader({
-                            company,
-                            location,
-                            description: normaliseWhitespace(result.description ?? ""),
-                        }),
+                        text: withHeader({company, location, description}),
+                        language: detectLanguage(description, result.title),
                         fetchedAt,
                         textTruncated: true,
                     },

@@ -1,0 +1,145 @@
+# Companies worth checking, grouped by country so one file serves several
+# markets. This is the input to the discovery command.
+#
+#   keywords     the vocabulary a posting has to hit to be worth reading
+#   minMatching  how many of them, at minimum
+#   companies    name + the country you would be applying in
+#
+# This is a seed list, not a curated one. Edit it: delete the companies you
+# would never join, add the ones you would. Being wrong about a company here is
+# harmless — the worst case is a posting you skim and dismiss.
+#
+# `country` is where you would be working, which for a remote-first company is
+# usually its headquarters. A code absent from data/countries.yaml still works;
+# it simply has no salary threshold and no authorisation statement.
+
+keywords: [react native, typescript, node, mobile, full stack]
+minMatching: 1
+
+companies:
+  # Germany
+  - name: Trade Republic
+    country: DE
+  - name: N26
+    country: DE
+  - name: SumUp
+    country: DE
+  - name: Personio
+    country: DE
+  - name: GetYourGuide
+    country: DE
+  - name: HelloFresh
+    country: DE
+  - name: Zalando
+    country: DE
+  - name: Delivery Hero
+    country: DE
+  - name: Flix
+    country: DE
+  - name: Celonis
+    country: DE
+  - name: Raisin
+    country: DE
+  - name: Forto
+    country: DE
+  - name: Ecosia
+    country: DE
+
+  # Netherlands
+  - name: Adyen
+    country: NL
+  - name: Booking.com
+    country: NL
+  - name: Mollie
+    country: NL
+  - name: bunq
+    country: NL
+  - name: Picnic
+    country: NL
+  - name: Backbase
+    country: NL
+  - name: Bird
+    country: NL
+  - name: Framer
+    country: NL
+  - name: TomTom
+    country: NL
+
+  # Ireland
+  - name: Intercom
+    country: IE
+  - name: Stripe
+    country: IE
+  - name: Workhuman
+    country: IE
+  - name: Flipdish
+    country: IE
+  - name: Wayflyer
+    country: IE
+  - name: Nory
+    country: IE
+  - name: Tines
+    country: IE
+  - name: LetsGetChecked
+    country: IE
+  - name: Fenergo
+    country: IE
+
+  # Portugal
+  - name: Feedzai
+    country: PT
+  - name: Unbabel
+    country: PT
+  - name: Talkdesk
+    country: PT
+  - name: Sword Health
+    country: PT
+  - name: OutSystems
+    country: PT
+  - name: Remote
+    country: PT
+  - name: Farfetch
+    country: PT
+  - name: Doist
+    country: PT
+
+  # Spain
+  - name: Glovo
+    country: ES
+  - name: Cabify
+    country: ES
+  - name: TravelPerk
+    country: ES
+  - name: Factorial
+    country: ES
+  - name: Typeform
+    country: ES
+  - name: Jobandtalent
+    country: ES
+  - name: Seedtag
+    country: ES
+  - name: Red Points
+    country: ES
+
+  # Remote-first, elsewhere in Europe. No threshold is configured for these
+  # codes yet, which is the honest state until you look each one up.
+  - name: Toggl
+    country: EE
+  - name: Pipedrive
+    country: EE
+  - name: Bolt
+    country: EE
+  - name: Veriff
+    country: EE
+  - name: Vinted
+    country: LT
+  - name: Klarna
+    country: SE
+  - name: Spotify
+    country: SE
+  - name: Hotjar
+    country: MT
+  - name: Wise
+    country: GB
+  - name: Revolut
+    country: GB

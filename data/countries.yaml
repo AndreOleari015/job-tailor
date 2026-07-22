@@ -1,0 +1,59 @@
+# Target markets, keyed by ISO 3166-1 alpha-2.
+#
+# Two things vary per country and neither can be guessed: the salary figure an
+# offer has to clear, and what you may truthfully say about your right to work
+# there. Both are entered by hand, from a primary source.
+#
+#   salary_min          annual gross in `currency`, or null. null DISABLES the
+#                       threshold check for that country. It is never read as
+#                       zero and never as a failure — no figure means no claim.
+#   salary_note         where the figure comes from, so the next person to
+#                       update it knows what they are updating. Optional.
+#   work_authorisation  the exact sentence the cover letter may close with. An
+#                       empty string means the letter says NOTHING about visas,
+#                       permits or residence status for that country.
+#
+# Only DE ships with a real figure. Every other threshold is null on purpose: a
+# stale immigration number is worse than no number. Look yours up (the national
+# immigration authority, not a blog) and fill it in.
+#
+# Unknown codes are allowed — a posting in a country not listed here gets no
+# threshold and no authorisation statement, and says so once on stderr.
+
+default: DE
+
+countries:
+  DE:
+    label: Germany
+    currency: EUR
+    salary_min: 45934
+    salary_note: "EU Blue Card, shortage occupation, 2026"
+    work_authorisation: >-
+      Eligible for the EU Blue Card under section 18g AufenthG as an IT
+      specialist, based on 4+ years of professional software experience.
+
+  IE:
+    label: Ireland
+    currency: EUR
+    salary_min: null
+    salary_note: null
+    work_authorisation: ""
+
+  NL:
+    label: Netherlands
+    currency: EUR
+    salary_min: null
+    salary_note: "Highly Skilled Migrant scheme — verify current figure"
+    work_authorisation: ""
+
+  PT:
+    label: Portugal
+    currency: EUR
+    salary_min: null
+    work_authorisation: ""
+
+  ES:
+    label: Spain
+    currency: EUR
+    salary_min: null
+    work_authorisation: ""

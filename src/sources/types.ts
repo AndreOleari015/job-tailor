@@ -1,3 +1,5 @@
+import type {PostingLanguage} from "./language.js";
+
 /**
  * A posting exactly as a source produced it, before any model has seen it.
  * `text` is plain text in the same shape a human would paste in, so an
@@ -15,6 +17,13 @@ export interface RawPosting {
     postedAt: string | null;
     /** Full description as plain text, with the Company:/Location: header prepended. */
     text: string;
+    /**
+     * The language the posting is written in, from a deterministic word-frequency
+     * check. It separates the two populations in this market: international
+     * companies posting in English, and domestic postings in German that mostly
+     * expect fluent German.
+     */
+    language: PostingLanguage;
     /** ISO timestamp. */
     fetchedAt: string;
     /**
@@ -32,6 +41,8 @@ export interface SourceQuery {
     country?: string;
     remote?: boolean;
     postedWithinDays?: number;
+    /** Keep only postings written in one of these. Empty means every language. */
+    languages?: readonly PostingLanguage[];
 }
 
 export interface JobSource {

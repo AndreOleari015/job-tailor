@@ -1,5 +1,6 @@
 import {createBoardSource, type BoardAdapter, type BoardDeps} from "./board.js";
 import type {BoardEntry} from "./companies.js";
+import {detectLanguage} from "./language.js";
 import {htmlToText, normaliseWhitespace, withHeader} from "./text.js";
 import type {JobSource, RawPosting} from "./types.js";
 
@@ -62,6 +63,7 @@ export const ashbyAdapter: BoardAdapter = {
                     url: job.jobUrl ?? "",
                     postedAt: job.publishedAt ?? null,
                     text: withHeader({company, location, description}),
+                    language: detectLanguage(description, job.title),
                     fetchedAt,
                 },
             ];

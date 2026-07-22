@@ -19,16 +19,9 @@ basics:
   github: github.com/example-user
   linkedin: linkedin.com/in/example-user
   location: Dublin, Ireland
-  # Keyed by ISO 3166-1 alpha-2. An empty string means nothing may be said about
-  # work authorisation for that country — omission is always safer than a
-  # statement that does not apply there.
-  work_authorisation:
-    DE: >-
-      Eligible for the EU Blue Card under section 18g AufenthG as an IT
-      specialist, based on 4+ years of professional software experience.
-    IE: ""
-    ES: ""
-    PT: ""
+  # Work authorisation is NOT here. It is a property of the country you are
+  # applying in, not of you, so it lives in data/countries.yaml — one statement
+  # per market, empty where nothing may be said.
 
 experience:
   - id: polar-labs

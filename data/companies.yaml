@@ -11,12 +11,69 @@
 #   https://jobs.lever.co/TOKEN
 #   https://jobs.ashbyhq.com/TOKEN
 
-greenhouse: []
+greenhouse:
+  - token: stripe
+    label: Stripe
+    country: IE
+  - token: bird
+    label: Bird
+    country: NL
+  - token: sumup
+    label: SumUp
+    country: DE
+  - token: hellofresh
+    label: HelloFresh
+    country: DE
+  - token: intercom
+    label: Intercom
+    country: IE
+  - token: adyen
+    label: Adyen
+    country: NL
+  - token: flix
+    label: Flix
+    country: DE
+  - token: raisin
+    label: Raisin
+    country: DE
+  - token: celonis
+    label: Celonis
+    country: DE
+  - token: tines
+    label: Tines
+    country: IE
+  - token: veriff
+    label: Veriff
+    country: EE
+  - token: getyourguide
+    label: GetYourGuide
+    country: DE
+  - token: n26
+    label: N26
+    country: DE
+  - token: remote
+    label: Remote
+    country: PT
+  - token: feedzai
+    label: Feedzai
+    country: PT
 # greenhouse:
 #   - token: examplecorp
 #     label: Example Corp
 
-lever: []
+lever:
+  - token: spotify
+    label: Spotify
+    country: SE
+  - token: farfetch
+    label: Farfetch
+    country: PT
+  - token: swordhealth
+    label: Sword Health
+    country: PT
+  - token: jobandtalent
+    label: Jobandtalent
+    country: ES
 # lever:
 #   - token: examplestartup
 #     label: Example Startup
@@ -24,3 +81,12 @@ lever: []
 ashby:
   - token: nory
     label: Nory
+  - token: mollie
+    label: Mollie
+    country: NL
+  - token: wayflyer
+    label: Wayflyer
+    country: IE
+  - token: forto
+    label: Forto
+    country: DE

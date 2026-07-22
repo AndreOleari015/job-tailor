@@ -23,7 +23,18 @@ export const jobSpecSchema = z.object({
     seniority: senioritySchema,
     required_stack: z.array(z.string()),
     nice_to_have: z.array(z.string()),
+    /**
+     * Annual gross, in `salary_currency`. The name predates country profiles
+     * and is kept so job.json files already on disk still parse; the figure is
+     * no longer converted to EUR, because a conversion the posting did not
+     * state is a number nobody can check.
+     */
     salary_min_eur: z.number().nullable(),
+    /**
+     * ISO 4217 code of the figure above. Absent on stored specs written before
+     * country profiles existed, where EUR was the only possibility.
+     */
+    salary_currency: z.string().nullable().default(null),
     visa_sponsorship: visaSponsorshipSchema,
     key_responsibilities: z.array(z.string()),
     tone: toneSchema,
@@ -35,6 +46,54 @@ export type ApplicationLanguage = z.infer<typeof applicationLanguageSchema>;
 export type Seniority = z.infer<typeof senioritySchema>;
 export type VisaSponsorship = z.infer<typeof visaSponsorshipSchema>;
 export type Tone = z.infer<typeof toneSchema>;
+
+/* ------------------------------------------------------------------ */
+/* Country profiles                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What one target market needs, and what cannot be inferred for it: the salary
+ * an offer has to clear, and the sentence the letter may say about the right to
+ * work there.
+ *
+ * `salary_min: null` disables the threshold check for that country. It is never
+ * read as zero: no figure means no claim, which is the only safe reading of an
+ * immigration number nobody has looked up.
+ */
+export const countryProfileSchema = z.object({
+    label: nonEmpty,
+    /** ISO 4217. A posting quoted in anything else is never converted. */
+    currency: nonEmpty,
+    salary_min: z.number().positive().nullable(),
+    salary_note: z.string().nullable().default(null),
+    /** Empty means the letter says nothing about visas, permits or residence. */
+    work_authorisation: z.string().default(""),
+});
+
+export const countriesFileSchema = z
+    .object({
+        /** The market targeted when nothing names one. */
+        default: z.string().regex(/^[A-Za-z]{2}$/, "must be an ISO 3166-1 alpha-2 code"),
+        countries: z.record(
+            z.string().regex(/^[A-Za-z]{2}$/, "must be an ISO 3166-1 alpha-2 code"),
+            countryProfileSchema,
+        ),
+    })
+    .superRefine((file, context) => {
+        const configured = Object.keys(file.countries).map((code) => code.toUpperCase());
+        if (!configured.includes(file.default.toUpperCase())) {
+            context.addIssue({
+                code: "custom",
+                path: ["default"],
+                message: `"${file.default}" is not one of the configured countries (${
+                    configured.join(", ") || "none"
+                }).`,
+            });
+        }
+    });
+
+export type CountryProfile = z.infer<typeof countryProfileSchema>;
+export type CountriesFile = z.infer<typeof countriesFileSchema>;
 
 /* ------------------------------------------------------------------ */
 /* Candidate profile                                                    */
@@ -71,11 +130,6 @@ export const basicsSchema = z.object({
     github: z.string(),
     linkedin: z.string(),
     location: z.string(),
-    /**
-     * Work-authorisation statement per ISO 3166-1 alpha-2 country code. An empty
-     * string means no statement applies there, and nothing may be said.
-     */
-    work_authorisation: z.record(z.string(), z.string()),
 });
 
 export const educationEntrySchema = z.object({
@@ -152,6 +206,7 @@ export const flags = {
     noSponsorship: "NO_SPONSORSHIP",
     languageRisk: "LANGUAGE_RISK",
     salaryBelowThreshold: "SALARY_BELOW_THRESHOLD",
+    salaryCurrencyMismatch: "SALARY_CURRENCY_MISMATCH",
     invalidBulletIdsDropped: "INVALID_BULLET_IDS_DROPPED",
     unexpectedAuthorisationClaim: "UNEXPECTED_AUTHORISATION_CLAIM",
     missingAuthorisationClaim: "MISSING_AUTHORISATION_CLAIM",
@@ -161,20 +216,6 @@ export const flags = {
     coverLetterNotParagraphed: "COVER_LETTER_NOT_PARAGRAPHED",
     skippedLowMatch: "SKIPPED_LOW_MATCH",
 } as const;
-
-/**
- * The work-authorisation statement that applies to a job's country, or
- * undefined when the country is unknown, absent from the profile, or blank.
- * Undefined means the letter must say nothing about authorisation at all.
- */
-export function resolveWorkAuthorisation(
-    profile: Profile,
-    country: string | null,
-): string | undefined {
-    if (!country) return undefined;
-    const statement = profile.basics.work_authorisation[country.trim().toUpperCase()];
-    return statement && statement.trim() ? statement : undefined;
-}
 
 /** Every bullet in the profile by id, across experience and projects. */
 export function collectBullets(profile: Profile): Map<string, Bullet> {

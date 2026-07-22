@@ -1,17 +1,16 @@
+import {mkdtemp, readFile, writeFile} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {afterEach, describe, expect, it, vi} from "vitest";
+import {resetCountriesCache} from "../src/config.js";
 import {companyFromHeader, extractJobSpec} from "../src/core/extract.js";
 import {applyMinScore, computeFlags, loadProfile, reconcile} from "../src/core/tailor.js";
 import type {LlmProvider} from "../src/llm/providers/index.js";
-import {
-    collectBulletIds,
-    flags,
-    resolveWorkAuthorisation,
-    type JobSpec,
-    type TailoredApplication,
-} from "../src/types.js";
+import {collectBulletIds, flags, type JobSpec, type TailoredApplication} from "../src/types.js";
 
 afterEach(() => {
+    resetCountriesCache();
     vi.restoreAllMocks();
 });
 
@@ -30,6 +29,7 @@ const jobSpec: JobSpec = {
     required_stack: ["React Native"],
     nice_to_have: [],
     salary_min_eur: null,
+    salary_currency: null,
     visa_sponsorship: "not_mentioned",
     key_responsibilities: [],
     tone: "startup",
@@ -94,6 +94,7 @@ describe("computeFlags", () => {
     it("flags a low score, a refusal to sponsor, a risky language and a low salary", () => {
         const hostile: JobSpec = {
             ...jobSpec,
+            country: "DE",
             language: "de",
             visa_sponsorship: "explicit_no",
             salary_min_eur: 40000,
@@ -104,6 +105,114 @@ describe("computeFlags", () => {
             flags.languageRisk,
             flags.salaryBelowThreshold,
         ]);
+    });
+});
+
+describe("SALARY_BELOW_THRESHOLD", () => {
+    const german = (salary: number | null, currency: string | null = "EUR"): JobSpec => ({
+        ...jobSpec,
+        country: "DE",
+        salary_min_eur: salary,
+        salary_currency: currency,
+    });
+
+    it("fires one euro below the German threshold", () => {
+        expect(computeFlags(german(45933), 78)).toEqual([flags.salaryBelowThreshold]);
+    });
+
+    it("does not fire at the threshold itself", () => {
+        expect(computeFlags(german(45934), 78)).toEqual([]);
+    });
+
+    it("does not fire for a country whose threshold is null", () => {
+        // IE is configured, deliberately without a figure. Absence is not zero,
+        // and it is not a failure either.
+        const irish: JobSpec = {...jobSpec, country: "IE", salary_min_eur: 1, salary_currency: "EUR"};
+        expect(computeFlags(irish, 78)).toEqual([]);
+    });
+
+    it("does not fire when the country could not be determined", () => {
+        expect(computeFlags({...jobSpec, salary_min_eur: 1}, 78)).toEqual([]);
+    });
+
+    it("does not fire for an unconfigured country", () => {
+        vi.spyOn(process.stderr, "write").mockReturnValue(true);
+        const japanese: JobSpec = {...jobSpec, country: "JP", salary_min_eur: 1};
+        expect(computeFlags(japanese, 78)).toEqual([]);
+    });
+
+    it("treats a spec with no currency as the profile's, which is how they were written", () => {
+        // job.json files predating country profiles carry no currency at all.
+        expect(computeFlags(german(45933, null), 78)).toEqual([flags.salaryBelowThreshold]);
+    });
+});
+
+describe("SALARY_CURRENCY_MISMATCH", () => {
+    it("fires on a GBP salary against a EUR profile, and does not guess a rate", () => {
+        const british: JobSpec = {
+            ...jobSpec,
+            country: "DE",
+            salary_min_eur: 30000,
+            salary_currency: "GBP",
+        };
+
+        const computed = computeFlags(british, 78);
+        expect(computed).toContain(flags.salaryCurrencyMismatch);
+        // £30,000 is below €45,934 at every plausible rate. It is still not
+        // flagged, because converting would invent a number the posting never
+        // stated.
+        expect(computed).not.toContain(flags.salaryBelowThreshold);
+    });
+
+    it("does not fire when the currencies agree", () => {
+        const german: JobSpec = {
+            ...jobSpec,
+            country: "DE",
+            salary_min_eur: 80000,
+            salary_currency: "eur",
+        };
+        expect(computeFlags(german, 78)).toEqual([]);
+    });
+
+    it("does not fire when the country has no threshold to compare against", () => {
+        const irish: JobSpec = {
+            ...jobSpec,
+            country: "IE",
+            salary_min_eur: 30000,
+            salary_currency: "GBP",
+        };
+        expect(computeFlags(irish, 78)).toEqual([]);
+    });
+});
+
+describe("the profile.yaml migration", () => {
+    /** The example profile with the phase-1.6 block put back in. */
+    async function legacyProfile(): Promise<string> {
+        const raw = await readFile(profilePath, "utf8");
+        const dir = await mkdtemp(path.join(tmpdir(), "job-tailor-profile-"));
+        const filePath = path.join(dir, "profile.yaml");
+
+        await writeFile(
+            filePath,
+            raw.replace(
+                "  location: Dublin, Ireland",
+                '  location: Dublin, Ireland\n  work_authorisation:\n    DE: "Eligible."\n    IE: ""',
+            ),
+            "utf8",
+        );
+        return filePath;
+    }
+
+    it("fails with a message naming the new location", async () => {
+        await expect(loadProfile(await legacyProfile())).rejects.toThrow(
+            /basics\.work_authorisation.*moved to.*countries\.yaml/s,
+        );
+    });
+
+    it("does not silently drop the statement by stripping the unknown key", async () => {
+        // Zod strips unknown keys, so without the explicit check this profile
+        // would load fine and quietly stop saying anything about visas.
+        await expect(loadProfile(await legacyProfile())).rejects.toThrow();
     });
 });
 
@@ -154,30 +263,8 @@ const BLUE_CARD =
     "Eligible for the EU Blue Card under section 18g AufenthG as an IT specialist, " +
     "based on 4+ years of professional software experience.";
 
-describe("resolveWorkAuthorisation", () => {
-    it("returns the statement for a country that has one", async () => {
-        const profile = await loadProfile(profilePath);
-        expect(resolveWorkAuthorisation(profile, "DE")).toBe(BLUE_CARD);
-    });
-
-    it("returns nothing for a country whose entry is deliberately empty", async () => {
-        const profile = await loadProfile(profilePath);
-        expect(resolveWorkAuthorisation(profile, "IE")).toBeUndefined();
-        expect(resolveWorkAuthorisation(profile, "ES")).toBeUndefined();
-    });
-
-    it("returns nothing when the country is unknown or absent", async () => {
-        const profile = await loadProfile(profilePath);
-        expect(resolveWorkAuthorisation(profile, null)).toBeUndefined();
-        expect(resolveWorkAuthorisation(profile, "JP")).toBeUndefined();
-    });
-
-    it("is case and whitespace insensitive on the country code", async () => {
-        const profile = await loadProfile(profilePath);
-        expect(resolveWorkAuthorisation(profile, " de ")).toBe(BLUE_CARD);
-    });
-});
-
+// The statement now comes from data/countries.yaml, not from the profile. The
+// lookup itself is covered in countries.test.ts; what follows is the letter.
 describe("authorisation claims in the letter", () => {
     /** The exact defect from the first real run: German law, Irish role. */
     const germanClaim =

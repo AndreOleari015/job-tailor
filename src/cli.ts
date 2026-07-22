@@ -11,8 +11,12 @@ import {
     isProviderName,
     readAdzunaCredentials,
     readArbeitsagenturKey,
+    readCandidatesPath,
     readCompaniesPath,
+    readCountriesPath,
+    readDefaultCountry,
     readJobsDir,
+    loadCountries,
     readMinScore,
     readOutputDir,
     readPreScoreMin,
@@ -31,15 +35,30 @@ import {rebaseTranscript} from "./llm/client.js";
 import {DEFAULT_PORT, startServer} from "./server/index.js";
 import {openStore} from "./tracker/store.js";
 import {
+    appendCompanies,
+    BOARD_NAMES,
     buildSources,
+    createProbeContext,
+    discoverFromCandidates,
+    DiscoveryCache,
     fetchPosting,
+    filterCandidates,
+    isBoardName,
+    isPostingLanguage,
     isSourceName,
+    loadCandidates,
     loadCompanies,
     PostingCache,
+    probeToken,
     searchAll,
+    slugsFor,
     SOURCE_NAMES,
+    type DiscoveryResult,
+    type PostingLanguage,
+    type ProbeResult,
     type RawPosting,
     type ScoredPosting,
+    type SearchAllResult,
 } from "./sources/index.js";
 import {
     flags,
@@ -249,9 +268,10 @@ function printSearchTable(postings: readonly ScoredPosting[]): void {
     const header = [
         "  #".padEnd(4),
         truncate("COMPANY", 22),
-        truncate("TITLE", 40),
-        truncate("LOCATION", 22),
+        truncate("TITLE", 38),
+        truncate("LOCATION", 20),
         truncate("SOURCE", 15),
+        "LANG",
         "PRE",
     ].join("  ");
     const lines = [header, "-".repeat(header.length)];
@@ -261,9 +281,10 @@ function printSearchTable(postings: readonly ScoredPosting[]): void {
             [
                 String(index + 1).padStart(3).padEnd(4),
                 truncate(posting.company ?? "(unknown)", 22),
-                truncate(posting.title, 40),
-                truncate(posting.location ?? "—", 22),
+                truncate(posting.title, 38),
+                truncate(posting.location ?? "—", 20),
                 truncate(posting.textTruncated ? `${posting.source}*` : posting.source, 15),
+                (posting.language === "unknown" ? "—" : posting.language).padEnd(4),
                 (posting.preScore === null ? "—" : String(posting.preScore)).padStart(3),
             ].join("  "),
         );
@@ -272,7 +293,11 @@ function printSearchTable(postings: readonly ScoredPosting[]): void {
     if (postings.some((posting) => posting.textTruncated)) {
         lines.push("", "* description is truncated at the source; pull it and read before tailoring.");
     }
-    lines.push("", "Pre-score is a keyword hint for ordering only, not the model's match score.");
+    lines.push(
+        "",
+        "Pre-score is a keyword hint for ordering only, not the model's match score.",
+        "A title match counts double; with no keyword in the title it is capped at 40.",
+    );
     process.stdout.write(`${lines.join("\n")}\n`);
 }
 
@@ -294,6 +319,7 @@ function trackPosting(posting: RawPosting): void {
                 postedAt: posting.postedAt,
                 fetchedAt: posting.fetchedAt,
                 text: posting.text,
+                language: posting.language,
             },
         ]);
     } finally {
@@ -614,11 +640,52 @@ interface SearchOptions {
     country?: string;
     location?: string;
     remote?: boolean;
+    language?: PostingLanguage[];
+    english?: boolean;
     postedWithin?: string;
     limit: string;
     refresh?: boolean;
     json?: boolean;
     profile: string;
+}
+
+/**
+ * The lines under the search table that explain what you are looking at: what
+ * the country filter withheld, and which language population you are seeing.
+ */
+function searchNotes(result: SearchAllResult): string[] {
+    const notes: string[] = [];
+
+    if (result.filter) {
+        notes.push(
+            `Filtered to ${result.filter.label}: ` +
+                `${result.filter.matched} of ${result.filter.total} postings matched.`,
+        );
+        if (result.filter.ambiguous) {
+            notes.push(
+                `${result.filter.ambiguous} named ${result.filter.label} alongside another ` +
+                    "country and were withheld rather than guessed at.",
+            );
+        }
+    }
+
+    // Two distinct populations share this market: international companies
+    // posting in English, and domestic postings that expect fluent German.
+    const shown = result.postings.length;
+    const majority = (["de", "en"] as const).find(
+        (code) => shown > 0 && result.languages[code] / shown > 0.6,
+    );
+    if (result.filter && majority) {
+        const name = majority === "de" ? "German" : "English";
+        notes.push(
+            `${result.languages[majority]} of ${shown} postings are in ${name}.` +
+                (majority === "de"
+                    ? " Use --english to see only English-language postings."
+                    : " Use --language de to see only German-language postings."),
+        );
+    }
+
+    return notes;
 }
 
 program
@@ -637,9 +704,22 @@ program
             return [...previous, value];
         },
     )
-    .option("--country <code>", "ISO 3166-1 alpha-2, for the aggregator sources")
+    .option("--country <code>", "ISO 3166-1 alpha-2; filters on the posting's own location")
     .option("--location <string>", "match postings whose location contains this")
     .option("--remote", "prefer remote postings where the source supports it")
+    .option(
+        "--language <code>",
+        "de | en | unknown; repeatable",
+        (value: string, previous: PostingLanguage[] = []) => {
+            if (!isPostingLanguage(value)) {
+                throw new ConfigError(
+                    `--language must be one of de, en, unknown, got "${value}".`,
+                );
+            }
+            return [...previous, value];
+        },
+    )
+    .option("--english", "shorthand for --language en")
     .option("--posted-within <days>", "only postings published in the last N days")
     .option("--limit <n>", "maximum rows", String(DEFAULT_SEARCH_LIMIT))
     .option("--refresh", "ignore the cache and refetch everything")
@@ -650,12 +730,17 @@ program
             const profile = await loadProfile(options.profile);
             const cache = await PostingCache.open();
 
+            const languages = [
+                ...new Set([...(options.language ?? []), ...(options.english ? ["en"] : [])]),
+            ] as PostingLanguage[];
+
             const result = await searchAll({
                 query: {
                     keywords,
                     ...(options.location ? {location: options.location} : {}),
                     ...(options.country ? {country: options.country} : {}),
                     ...(options.remote ? {remote: true} : {}),
+                    ...(languages.length ? {languages} : {}),
                     ...(options.postedWithin
                         ? {postedWithinDays: Number(options.postedWithin)}
                         : {}),
@@ -674,11 +759,18 @@ program
 
             for (const warning of result.warnings) note(`[job-tailor] ${warning}`);
 
+            // A zero-result country search is almost always the filter doing
+            // its job, not a source failing. Say which it was.
+            const notes = searchNotes(result);
+
             if (options.json) {
+                for (const line of notes) note(line);
                 printJson(result.postings);
                 return;
             }
+
             printSearchTable(result.postings);
+            if (notes.length) process.stdout.write(`\n${notes.join("\n")}\n`);
         }),
     );
 
@@ -749,6 +841,297 @@ program
             } finally {
                 store.close();
             }
+        }),
+    );
+
+interface DiscoverOptions {
+    input: string;
+    country?: string[];
+    board?: string[];
+    minMatching?: string;
+    refresh?: boolean;
+    write?: boolean;
+    json?: boolean;
+}
+
+function printDiscoveryTable(results: readonly DiscoveryResult[]): void {
+    if (!results.length) {
+        process.stdout.write("No boards found.\n");
+        return;
+    }
+
+    const header = [
+        truncate("COMPANY", 22),
+        truncate("CC", 4),
+        truncate("BOARD", 11),
+        truncate("TOKEN", 20),
+        "TOTAL".padStart(5),
+        "MATCH".padStart(5),
+        "SAMPLE TITLE",
+    ].join("  ");
+    const lines = [header, "-".repeat(header.length)];
+
+    for (const result of results) {
+        lines.push(
+            [
+                truncate(result.company, 22),
+                truncate(result.country, 4),
+                truncate(result.board, 11),
+                truncate(result.token, 20),
+                String(result.totalJobs).padStart(5),
+                String(result.matchingJobs).padStart(5),
+                truncate(result.sampleTitles[0] ?? "—", 40).trimEnd(),
+            ].join("  "),
+        );
+    }
+
+    lines.push("", "MATCH counts postings hitting your candidates.yaml keywords, not a match score.");
+
+    // A guessed slug can land on someone else's board. The board's own name is
+    // the only evidence available, so any disagreement is put in front of you.
+    const mismatched = results.filter((result) => !nameAgrees(result));
+    if (mismatched.length) {
+        lines.push("", "Verify before using — the board reports a different name:");
+        for (const result of mismatched) {
+            lines.push(
+                `  ${result.board}:${result.token} calls itself "${result.companyName}", ` +
+                    `you listed "${result.company}"`,
+            );
+        }
+    }
+
+    process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+/** Loose agreement: either name containing the other, ignoring case and punctuation. */
+function nameAgrees(result: DiscoveryResult): boolean {
+    if (!result.companyName) return true;
+    const fold = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const [reported, listed] = [fold(result.companyName), fold(result.company)];
+    return !reported || !listed || reported.includes(listed) || listed.includes(reported);
+}
+
+function printProbe(result: ProbeResult): void {
+    const lines = [
+        `${label("Board")}${result.board}`,
+        `${label("Token")}${result.token}`,
+        `${label("Valid")}${result.valid ? "yes" : "no"}`,
+    ];
+
+    if (!result.valid) {
+        lines.push(`${label("Reason")}${result.reason ?? "unknown"}`);
+        process.stdout.write(`${lines.join("\n")}\n`);
+        return;
+    }
+
+    lines.push(
+        `${label("Company")}${result.companyName ?? "(not reported by this board)"}`,
+        `${label("Postings")}${result.totalJobs}`,
+        `${label("Matching")}${result.matchingJobs}`,
+        `${label("Locations")}${result.locations.length ? result.locations.join(", ") : "—"}`,
+    );
+
+    if (result.sampleTitles.length) {
+        lines.push("Sample titles:");
+        for (const title of result.sampleTitles) lines.push(`  - ${title}`);
+    }
+
+    process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+program
+    .command("discover")
+    .description("Find and verify Greenhouse, Lever and Ashby board tokens for your candidates.")
+    .option("--input <path>", "candidate company list", readCandidatesPath())
+    .option(
+        "--country <code>",
+        "only candidates in this country; repeatable",
+        (value: string, previous: string[] = []) => [...previous, value],
+    )
+    .option(
+        "--board <name>",
+        `restrict to a board (${BOARD_NAMES.join(", ")}); repeatable`,
+        (value: string, previous: string[] = []) => {
+            if (!isBoardName(value)) {
+                throw new ConfigError(
+                    `--board must be one of ${BOARD_NAMES.join(", ")}, got "${value}".`,
+                );
+            }
+            return [...previous, value];
+        },
+    )
+    .option("--min-matching <n>", "only report boards with at least N matching postings")
+    .option("--refresh", "ignore the discovery cache and re-probe everything")
+    .option("--write", `append confirmed entries to ${readCompaniesPath()}`)
+    .option("--json", "machine-readable output")
+    .action(
+        guarded(async (options: DiscoverOptions) => {
+            const file = await loadCandidates(options.input);
+            const candidates = filterCandidates(file.companies, options.country ?? []);
+
+            if (!candidates.length) {
+                note(
+                    `No candidates in ${options.input}` +
+                        `${options.country?.length ? ` for ${options.country.join(", ")}` : ""}.`,
+                );
+                return;
+            }
+
+            const minMatching = options.minMatching
+                ? Number(options.minMatching)
+                : (file.minMatching ?? 1);
+            if (!Number.isFinite(minMatching) || minMatching < 0) {
+                throw new ConfigError(`--min-matching must be a number, got "${options.minMatching}".`);
+            }
+
+            const cache = await DiscoveryCache.open();
+            const context = createProbeContext({
+                keywords: file.keywords,
+                cache,
+                ...(options.refresh ? {refresh: true} : {}),
+            });
+
+            const slugs = candidates.reduce((total, one) => total + slugsFor(one).length, 0);
+            note(
+                `Probing ${candidates.length} companies (${slugs} slugs) against ` +
+                    `${(options.board ?? BOARD_NAMES).join(", ")}. Cached results are not re-probed.`,
+            );
+
+            const results = await discoverFromCandidates(
+                candidates,
+                {
+                    keywords: file.keywords,
+                    ...(options.board?.length ? {boards: options.board} : {}),
+                    minMatching,
+                },
+                context,
+            );
+            await cache.save();
+
+            note(
+                `${context.budget.spent} probes sent, ${results.length} boards reported ` +
+                    `(>= ${minMatching} matching).`,
+            );
+
+            if (options.json) printJson(results);
+            else printDiscoveryTable(results);
+
+            if (!options.write) return;
+
+            const added = await appendCompanies(
+                readCompaniesPath(),
+                results.map((result) => ({
+                    board: result.board as "greenhouse" | "lever" | "ashby",
+                    token: result.token,
+                    // The name you listed, not the one the board reports: this
+                    // file is read by you, and Intercom's board calls itself
+                    // "Fin". Any disagreement was printed above.
+                    label: result.company,
+                    country: result.country,
+                })),
+            );
+
+            if (!added.length) {
+                process.stdout.write(`\nNothing new for ${readCompaniesPath()}.\n`);
+                return;
+            }
+            process.stdout.write(
+                `\nAdded ${added.length} to ${readCompaniesPath()}:\n` +
+                    added.map((one) => `  ${one.board.padEnd(11)}${one.token}`).join("\n") +
+                    "\n",
+            );
+        }),
+    );
+
+program
+    .command("probe")
+    .description("Check one company's board token by hand.")
+    .argument("<board>", BOARD_NAMES.join(" | "))
+    .argument("<token>", "the slug in the board URL")
+    .option("--input <path>", "candidate list to read keywords from", readCandidatesPath())
+    .option("--refresh", "ignore the discovery cache")
+    .option("--json", "machine-readable output")
+    .action(
+        guarded(
+            async (
+                board: string,
+                token: string,
+                options: {input: string; refresh?: boolean; json?: boolean},
+            ) => {
+                if (!isBoardName(board)) {
+                    throw new ConfigError(
+                        `board must be one of ${BOARD_NAMES.join(", ")}, got "${board}".`,
+                    );
+                }
+
+                const file = await loadCandidates(options.input);
+                const cache = await DiscoveryCache.open();
+                const result = await probeToken(
+                    board,
+                    token,
+                    createProbeContext({
+                        keywords: file.keywords,
+                        cache,
+                        ...(options.refresh ? {refresh: true} : {}),
+                    }),
+                );
+                await cache.save();
+
+                if (options.json) printJson(result);
+                else printProbe(result);
+                if (!result.valid) process.exitCode = 1;
+            },
+        ),
+    );
+
+program
+    .command("countries")
+    .description("List the configured target markets and what each one is missing.")
+    .action(
+        guarded(async () => {
+            const {countries} = loadCountries();
+            const defaultCode = readDefaultCountry();
+
+            const header = [
+                "CODE".padEnd(6),
+                "COUNTRY".padEnd(16),
+                "THRESHOLD".padEnd(16),
+                "AUTHORISATION",
+            ].join("  ");
+            const lines = [header, "-".repeat(header.length)];
+
+            for (const [code, country] of Object.entries(countries).sort(([a], [b]) =>
+                a.localeCompare(b),
+            )) {
+                const threshold =
+                    country.salary_min === null
+                        ? "not set"
+                        : `${country.currency} ${country.salary_min.toLocaleString("en-GB")}`;
+                lines.push(
+                    [
+                        (code === defaultCode ? `${code} *` : code).padEnd(6),
+                        truncate(country.label, 16),
+                        threshold.padEnd(16),
+                        country.work_authorisation.trim() ? "present" : "none",
+                    ].join("  "),
+                );
+            }
+
+            if (!Object.keys(countries).includes(defaultCode)) {
+                lines.push(
+                    "",
+                    `JOB_TAILOR_DEFAULT_COUNTRY is ${defaultCode}, which is not configured here.`,
+                );
+            }
+
+            lines.push(
+                "",
+                "* default. A threshold of \"not set\" disables the salary check for that",
+                "market — it is never treated as zero. An authorisation of \"none\" means the",
+                "letter says nothing about visas, permits or residence status there.",
+                `Both are entered by hand in ${readCountriesPath()}, from a primary source.`,
+            );
+            process.stdout.write(`${lines.join("\n")}\n`);
         }),
     );
 

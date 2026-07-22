@@ -1,5 +1,6 @@
 import {createBoardSource, type BoardAdapter, type BoardDeps} from "./board.js";
 import type {BoardEntry} from "./companies.js";
+import {detectLanguage} from "./language.js";
 import {htmlToText, withHeader} from "./text.js";
 import type {JobSource, RawPosting} from "./types.js";
 
@@ -47,6 +48,7 @@ export const greenhouseAdapter: BoardAdapter = {
                     url: job.absolute_url ?? "",
                     postedAt: job.first_published ?? job.updated_at ?? null,
                     text: withHeader({company, location, description}),
+                    language: detectLanguage(description, job.title),
                     fetchedAt,
                 },
             ];

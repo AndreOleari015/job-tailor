@@ -1,4 +1,4 @@
-import {SALARY_THRESHOLD_EUR} from "../config.js";
+import {getCountryProfile, resolveWorkAuthorisation} from "../config.js";
 import type {JobSpec, Profile} from "../types.js";
 
 export interface Prompt {
@@ -17,6 +17,7 @@ const JOB_SPEC_SCHEMA = `{
   "required_stack": string[],
   "nice_to_have": string[],
   "salary_min_eur": number | null,
+  "salary_currency": string | null,
   "visa_sponsorship": "explicit_yes" | "explicit_no" | "not_mentioned",
   "key_responsibilities": string[],
   "tone": "corporate" | "startup" | "agency"
@@ -53,8 +54,11 @@ Rules:
   no organisation name appears anywhere in the input.
 - required_stack: only technologies stated as requirements, not nice-to-haves.
 - nice_to_have: technologies described as a plus, bonus or desirable.
-- salary_min_eur: annual gross in EUR. Convert monthly figures (x12).
-  Convert other currencies only if a rate is stated; otherwise null.
+- salary_min_eur: the annual gross figure as the posting states it. Convert
+  monthly figures (x12). Never convert between currencies, not even at a rate
+  you know: report the number that appears and name its currency below.
+- salary_currency: the ISO 4217 code of that figure ("EUR", "GBP", "CHF"), or
+  null when no salary is stated.
 - country: infer the ISO 3166-1 alpha-2 code from the stated location. If the
   location is ambiguous or absent, return null. Do not guess from company name
   or language.
@@ -75,6 +79,32 @@ ${jobText}
 """`;
 
     return {system, user};
+}
+
+/**
+ * The statement is resolved here rather than asked for: the model no longer
+ * receives a map to look up in, and the country whose rules apply is a fact the
+ * program knows. Absence is stated as loudly as presence, because the failure
+ * mode is a letter volunteering a claim that applies somewhere else.
+ */
+function authorisationRule(jobSpec: JobSpec): string {
+    const statement = resolveWorkAuthorisation(jobSpec.country);
+    if (!statement) {
+        return `no statement applies to ${jobSpec.country ?? "this posting's country"}.
+  DO NOT mention work authorisation, visas, permits or residence status
+  anywhere in the letter. Say nothing rather than something inapplicable.`;
+    }
+    return `close the letter with this statement verbatim and unaltered:
+  "${statement}"
+  Do not add any other claim about visas, permits or residence status.`;
+}
+
+/** Only stated when a threshold exists for the posting's country. */
+function salaryFlagRule(jobSpec: JobSpec): string {
+    const country = getCountryProfile(jobSpec.country);
+    if (country.salary_min === null) return "";
+    return `, "SALARY_BELOW_THRESHOLD" if salary_min_eur is not null, its
+  currency is ${country.currency}, and it is below ${country.salary_min}`;
 }
 
 export function tailoringPrompt(profile: Profile, jobSpec: JobSpec): Prompt {
@@ -155,11 +185,7 @@ HARD RULES:
 - Adjacency is not experience. Firebase is not AWS. Firestore is not MongoDB.
   Subscription billing is not payment processing. CI/CD is not DevOps
   ownership.
-- Work authorisation: look up work_authorisation[jobSpec.country]. If it exists
-  and is a non-empty string, close the letter with that statement verbatim,
-  unaltered. If jobSpec.country is null, or there is no entry, or the entry is
-  empty, DO NOT mention work authorisation, visas, permits or residence status
-  anywhere in the letter. Say nothing rather than something inapplicable.
+- Work authorisation: ${authorisationRule(jobSpec)}
 - match_score: 0-100, honest assessment of fit against required_stack and
   seniority.
 - gaps: requirements in the posting the candidate does not meet. Be blunt.
@@ -167,8 +193,7 @@ HARD RULES:
   employer.
 - flags: include "LOW_MATCH" if match_score < 50, "NO_SPONSORSHIP" if
   visa_sponsorship is "explicit_no", "LANGUAGE_RISK" if language is neither
-  "en" nor "pt", "SALARY_BELOW_THRESHOLD" if salary_min_eur is not null and
-  below ${SALARY_THRESHOLD_EUR}.`;
+  "en" nor "pt"${salaryFlagRule(jobSpec)}.`;
 
     return {system, user};
 }
