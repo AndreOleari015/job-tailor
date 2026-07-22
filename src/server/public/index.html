@@ -52,20 +52,20 @@
     <label for="location">Location</label>
     <input id="location" type="text" placeholder="Dublin" autocomplete="off">
   </div>
-  <div class="field">
-    <label for="sources">Sources</label>
-    <select id="sources" multiple size="5">
-      <option value="greenhouse">greenhouse</option>
-      <option value="lever">lever</option>
-      <option value="ashby">ashby</option>
-      <option value="adzuna">adzuna</option>
-      <option value="arbeitsagentur">arbeitsagentur</option>
-    </select>
-  </div>
   <div class="field field-actions">
     <button id="search" type="button" class="primary">Search</button>
     <span class="hint">Search is free — it never calls the model.</span>
   </div>
+
+  <fieldset class="field field-sources" id="sources">
+    <legend>Sources</legend>
+    <button type="button" class="chip" data-source="greenhouse">greenhouse</button>
+    <button type="button" class="chip" data-source="lever">lever</button>
+    <button type="button" class="chip" data-source="ashby">ashby</button>
+    <button type="button" class="chip" data-source="adzuna">adzuna</button>
+    <button type="button" class="chip" data-source="arbeitsagentur">arbeitsagentur</button>
+    <span class="hint">None selected searches all of them.</span>
+  </fieldset>
 </section>
 
 <nav class="filters" aria-label="Filter">

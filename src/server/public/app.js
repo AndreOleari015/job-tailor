@@ -63,13 +63,24 @@ async function api(path, options = {}) {
 /* Settings                                                             */
 /* ------------------------------------------------------------------ */
 
+function sourceChips() {
+    return [...document.querySelectorAll("#sources .chip")];
+}
+
+/** Selected source names. Empty means every source, as the CLI reads it too. */
+function selectedSources() {
+    return sourceChips()
+        .filter((chip) => chip.classList.contains("is-active"))
+        .map((chip) => chip.dataset.source);
+}
+
 function saveSettings() {
     const settings = {
         keywords: $("keywords").value,
         country: $("country").value,
         language: $("language").value,
         location: $("location").value,
-        sources: [...$("sources").selectedOptions].map((option) => option.value),
+        sources: selectedSources(),
     };
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 }
@@ -85,8 +96,8 @@ function loadSettings() {
     if (settings.country) $("country").value = settings.country;
     if (settings.language) $("language").value = settings.language;
     if (settings.location) $("location").value = settings.location;
-    for (const option of $("sources").options) {
-        option.selected = (settings.sources || []).includes(option.value);
+    for (const chip of sourceChips()) {
+        chip.classList.toggle("is-active", (settings.sources || []).includes(chip.dataset.source));
     }
 }
 
@@ -225,6 +236,10 @@ async function openDetail(id) {
 
     const pane = $("detail");
     pane.hidden = false;
+    // A hidden grid item still reserves its track, so the list would sit in
+    // half the window with nothing beside it. The second column only exists
+    // once there is something to put in it.
+    document.querySelector(".layout").classList.add("has-detail");
     clear(pane);
 
     pane.append(el("h2", null, posting.company || "(unknown company)"));
@@ -491,7 +506,7 @@ async function runSearch(button) {
 
     try {
         const keywords = $("keywords").value.split(/[,\s]+/).map((word) => word.trim()).filter(Boolean);
-        const sources = [...$("sources").selectedOptions].map((option) => option.value);
+        const sources = selectedSources();
 
         const result = await api("/api/search", {
             method: "POST",
@@ -563,6 +578,14 @@ function init() {
 
     // Language narrows the list you are already looking at, not only the next
     // search, so it has to redraw on change rather than waiting for Search.
+    for (const chip of sourceChips()) {
+        chip.addEventListener("click", () => {
+            chip.classList.toggle("is-active");
+            chip.setAttribute("aria-pressed", String(chip.classList.contains("is-active")));
+            saveSettings();
+        });
+    }
+
     $("language").addEventListener("change", async () => {
         saveSettings();
         await refreshList();
