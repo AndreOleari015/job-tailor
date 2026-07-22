@@ -42,6 +42,9 @@ const VALID: [Status, Status][] = [
     ["generated", "dismissed"],
     ["generated", "generating"],
     ["applied", "closed"],
+    ["applied", "generated"],
+    ["closed", "applied"],
+    ["closed", "generated"],
     ["dismissed", "new"],
 ];
 
@@ -79,8 +82,8 @@ describe("status transitions", () => {
         ["generated", "closed"],
         ["applied", "generating"],
         ["applied", "dismissed"],
-        ["closed", "applied"],
         ["closed", "new"],
+        ["closed", "generating"],
         ["dismissed", "generated"],
     ];
 
@@ -102,11 +105,14 @@ describe("status transitions", () => {
         db.close();
     });
 
-    it("says so when a status is terminal", () => {
+    it("reopens a closed posting", () => {
+        // Closed is no longer terminal: an answer can arrive after you had
+        // written a posting off.
         const db = store();
         db.upsertPostings([posting({sourceId: "a"})]);
         drive(db, "a", "closed");
-        expect(() => db.setStatus("a", "new")).toThrow(/terminal/);
+
+        expect(db.setStatus("a", "applied").status).toBe("applied");
         db.close();
     });
 
@@ -117,6 +123,34 @@ describe("status transitions", () => {
 
         expect(db.getPosting("a")?.appliedAt).toBeNull();
         expect(db.setStatus("a", "applied").appliedAt).not.toBeNull();
+        db.close();
+    });
+
+    it("clears applied_at and any outcome when un-applied", () => {
+        // "not applied" is what generated means, and an outcome describes what
+        // happened after applying — neither survives the walk back.
+        const db = store();
+        db.upsertPostings([posting({sourceId: "a"})]);
+        drive(db, "a", "applied");
+        db.setOutcome("a", "rejected");
+
+        const back = db.setStatus("a", "generated");
+        expect(back.status).toBe("generated");
+        expect(back.appliedAt).toBeNull();
+        expect(back.outcome).toBeNull();
+        db.close();
+    });
+
+    it("keeps applied_at and outcome when a posting is closed", () => {
+        const db = store();
+        db.upsertPostings([posting({sourceId: "a"})]);
+        drive(db, "a", "applied");
+        const appliedAt = db.getPosting("a")?.appliedAt;
+        db.setOutcome("a", "offer");
+
+        const closed = db.setStatus("a", "closed");
+        expect(closed.appliedAt).toBe(appliedAt);
+        expect(closed.outcome).toBe("offer");
         db.close();
     });
 

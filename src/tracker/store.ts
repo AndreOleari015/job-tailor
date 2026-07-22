@@ -36,9 +36,14 @@ const TRANSITIONS: Record<Status, readonly Status[]> = {
     // Regenerating a generated posting is deliberate: a better prompt or a
     // corrected profile is a reason to run it again.
     generated: ["applied", "dismissed", "generating"],
-    applied: ["closed"],
+    // applied -> generated undoes a click made too soon; applied -> closed
+    // wraps it up. "Applied" is a fact about the outside world, and the outside
+    // world is correctable.
+    applied: ["closed", "generated"],
     dismissed: ["new"],
-    closed: [],
+    // Closed is no longer terminal: an answer can arrive after you had written
+    // a posting off, so it reopens to applied or back to generated.
+    closed: ["applied", "generated"],
 };
 
 /**
@@ -422,13 +427,20 @@ export class TrackerStore {
         }
 
         // Applying is the moment worth timestamping: it is the one step the
-        // tool cannot take for you.
-        const appliedAt = status === "applied" ? this.now() : posting.appliedAt;
+        // tool cannot take for you. Closed keeps that history; un-applying to a
+        // status that never applied clears it, along with any outcome — an
+        // outcome describes what happened after applying, and a posting that is
+        // no longer applied has nothing to describe.
+        const keepsHistory = OUTCOME_STATUSES.includes(status);
+        const appliedAt = status === "applied" ? this.now() : keepsHistory ? posting.appliedAt : null;
+        const outcome = keepsHistory ? posting.outcome : null;
+
         this.db
             .prepare(
-                "UPDATE postings SET status = ?, applied_at = ?, updated_at = ? WHERE source_id = ?",
+                "UPDATE postings SET status = ?, applied_at = ?, outcome = ?, updated_at = ? " +
+                    "WHERE source_id = ?",
             )
-            .run(status, appliedAt, this.now(), sourceId);
+            .run(status, appliedAt, outcome, this.now(), sourceId);
 
         return this.require(sourceId);
     }

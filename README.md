@@ -10,7 +10,7 @@
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" />
   <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A522-339933?logo=nodedotjs&logoColor=white" />
   <img alt="Providers" src="https://img.shields.io/badge/LLM-Gemini%20%7C%20Claude-8A2BE2" />
-  <img alt="Tests" src="https://img.shields.io/badge/tests-390%20passing-success" />
+  <img alt="Tests" src="https://img.shields.io/badge/tests-395%20passing-success" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue" />
 </p>
 
@@ -683,14 +683,20 @@ new       -> generating | dismissed
 generating-> generated  | failed
 failed    -> generating | dismissed
 generated -> applied    | dismissed | generating
-applied   -> closed
+applied   -> closed     | generated
 dismissed -> new
-closed     (terminal)
+closed    -> applied    | generated
 ```
 
 An illegal move fails with a sentence naming the moves that *are* available. An outcome
 (`no_response`, `rejected`, `interview`, `offer`) can only be set once you have applied, because
 before that there is nothing to describe.
+
+**Applied is a fact about the outside world, and the outside world is correctable.** A posting
+marked applied too soon walks back to `generated`; a closed one reopens, because an answer can
+arrive after you had written it off. Walking back out of `applied` clears its timestamp and any
+outcome — a posting that is no longer applied has nothing an outcome could describe — while
+`closed` keeps both, since closing is an ending, not an undo.
 
 Gaps are kept in the database for one reason: `stats()` counts the ones that come up most often
 across everything generated. A gap repeated across twenty postings is a study plan, not a
@@ -995,7 +1001,7 @@ npm test          # tsc, then vitest
 npm run test:watch
 ```
 
-390 tests. All but one make no network call and drive no browser. They cover the zod schemas
+395 tests. All but one make no network call and drive no browser. They cover the zod schemas
 against valid and malformed fixtures, the `callJson` retry loop against mocked SDKs, provider and
 per-task model resolution, the `ConfigError` for each provider's missing key, Gemini's backoff
 and quota handling, the JSON Schema conversion, the `DEBUG=1` transcript (written when set,

@@ -343,20 +343,26 @@ async function openDetail(id) {
         }
         actions.append(generate);
     }
-    if (posting.status === "generated") {
-        const applied = el("button", null, "Mark as applied");
-        applied.addEventListener("click", () => changeStatus(id, "applied"));
-        actions.append(applied);
-    }
-    if (posting.status === "new" || posting.status === "generated" || posting.status === "failed") {
-        const dismiss = el("button", null, "Dismiss");
-        dismiss.addEventListener("click", () => changeStatus(id, "dismissed"));
-        actions.append(dismiss);
-    }
+    // The moves that change how far along an application is. Each button offers
+    // exactly one legal transition, so the state machine in the store and the
+    // buttons here never disagree.
+    const stateButton = (label, to, primary) => {
+        const button = el("button", primary ? "primary" : null, label);
+        button.addEventListener("click", () => changeStatus(id, to));
+        actions.append(button);
+    };
+
+    if (posting.status === "generated") stateButton("Mark as applied", "applied", true);
     if (posting.status === "applied") {
-        const close = el("button", null, "Close");
-        close.addEventListener("click", () => changeStatus(id, "closed"));
-        actions.append(close);
+        stateButton("Mark as not applied", "generated");
+        stateButton("Close", "closed");
+    }
+    if (posting.status === "closed") {
+        stateButton("Reopen as applied", "applied");
+        stateButton("Reopen, not applied", "generated");
+    }
+    if (["new", "generated", "failed"].includes(posting.status)) {
+        stateButton("Dismiss", "dismissed");
     }
     pane.append(actions);
 
