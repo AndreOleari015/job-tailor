@@ -28,6 +28,7 @@ import {
     type Task,
 } from "./config.js";
 import {extractJobSpec} from "./core/extract.js";
+import {describeFlag} from "./core/flags.js";
 import {preScore} from "./core/match.js";
 import {RenderBlockedError, renderApplication} from "./core/render.js";
 import {slugify} from "./core/slug.js";
@@ -218,9 +219,19 @@ function printSummary(jobSpec: JobSpec, application: TailoredApplication, outDir
         `${label("Company")}${jobSpec.company}`,
         `${label("Role")}${jobSpec.role}`,
         `${label("Match score")}${Math.round(application.match_score)}/100`,
-        `${label("Flags")}${application.flags.length ? application.flags.join(", ") : "(none)"}`,
-        `${label("Provider")}${describeProvider(["extract", "tailor"])}`,
     ];
+
+    // One flag per line with the reason spelled out. This is the summary you
+    // read before deciding whether to send something to an employer, so it has
+    // to say what is wrong, not name a constant you then go and look up.
+    if (application.flags.length) {
+        lines.push("Flags:");
+        for (const flag of application.flags) lines.push(`  - ${describeFlag(flag)}`);
+    } else {
+        lines.push(`${label("Flags")}(none)`);
+    }
+
+    lines.push(`${label("Provider")}${describeProvider(["extract", "tailor"])}`);
 
     if (application.gaps.length) {
         lines.push("Gaps:");

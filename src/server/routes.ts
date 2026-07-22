@@ -8,6 +8,7 @@ import {
     type PostingLanguage,
     type ScoredPosting,
 } from "../sources/index.js";
+import {FLAG_INFO} from "../core/flags.js";
 import {isOutcome, isStatus, TrackerError} from "../tracker/store.js";
 import {
     generateForPosting,
@@ -61,6 +62,10 @@ export function registerRoutes(
     app.get("/api/status", async () => queue.status());
 
     app.get("/api/stats", async () => store.stats());
+
+    // The UI reads its flag wording from here rather than keeping a copy, so
+    // the page and the terminal can never disagree about what a flag means.
+    app.get("/api/flags", async () => FLAG_INFO);
 
     app.get("/api/sources", async () => {
         const companies = await loadCompanies();

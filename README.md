@@ -426,6 +426,18 @@ discarded.
 Everything from `UNEXPECTED_AUTHORISATION_CLAIM` down means **read the letter before sending
 it.** Nothing is repaired automatically.
 
+The constants above are the contract — they are what `--json` emits, what the tracker stores and
+what `reconcile()` sets. They are not what you read. `src/core/flags.ts` turns each one into a
+label and a sentence saying what to do about it, and both surfaces print from that single table:
+the CLI inlines it in the summary, the web UI fetches it from `/api/flags`.
+
+```console
+Flags:
+  - Unbacked tech claim — The letter names a technology from the posting that no selected
+    bullet and no skill in your profile backs up. Cut it, or replace it with work you have
+    really done.
+```
+
 ## Design notes
 
 ### The model selects; it does not write facts

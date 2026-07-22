@@ -11,95 +11,25 @@ const LANGUAGE_LABELS = {de: "German", en: "English", unknown: "—"};
 
 const POLL_MS = 2000;
 
-/** Flags that stop the renderer producing a PDF. Shown in the warning colour. */
-const BLOCKING_FLAGS = new Set([
-    "UNEXPECTED_AUTHORISATION_CLAIM",
-    "COVER_LETTER_REF_MISMATCH",
-    "UNSUPPORTED_TECH_CLAIM",
-    "INVALID_BULLET_IDS_DROPPED",
-]);
-
 /*
- * What each flag means in words, and what to do about it. The constants stay
- * exactly as they are — they are the contract between reconcile(), the
- * renderer, the CLI and the README — but a page you read at 9pm before sending
- * an application should not make you translate SCREAMING_SNAKE_CASE first. The
- * raw code stays on the badge's tooltip so it still matches what the CLI prints.
+ * Flag wording comes from GET /api/flags, which serves core/flags.ts — the same
+ * table the CLI prints from. Keeping a second copy here would mean two sets of
+ * prose describing one behaviour, and they would drift.
  */
-const FLAG_INFO = {
-    UNSUPPORTED_TECH_CLAIM: {
-        label: "Unbacked tech claim",
-        detail:
-            "The letter names a technology from the posting that no selected bullet and no " +
-            "skill in your profile backs up. Cut it, or replace it with work you have really done.",
-    },
-    UNEXPECTED_AUTHORISATION_CLAIM: {
-        label: "Wrong visa claim",
-        detail:
-            "The letter says something about visas, permits or residence that does not apply in " +
-            "this country. Delete the sentence — saying nothing is always safe.",
-    },
-    COVER_LETTER_REF_MISMATCH: {
-        label: "Cites unselected bullets",
-        detail:
-            "The letter draws on CV bullets that were not selected for it, which usually means a " +
-            "fact was taken from the wrong job or project. Check every claim against your profile.",
-    },
-    INVALID_BULLET_IDS_DROPPED: {
-        label: "Invented bullets dropped",
-        detail:
-            "The model referred to CV bullets that do not exist in your profile. They were " +
-            "removed, but read the letter: the prose around them may be invented too.",
-    },
-    MISSING_AUTHORISATION_CLAIM: {
-        label: "Visa line missing",
-        detail:
-            "You have a work-authorisation statement for this country and the letter leaves it " +
-            "out. Paste it into the closing paragraph.",
-    },
-    COVER_LETTER_TOO_LONG: {
-        label: "Letter too long",
-        detail: "Over 200 words. Cut it back, or it will not fit on one page.",
-    },
-    COVER_LETTER_NOT_PARAGRAPHED: {
-        label: "Not paragraphed",
-        detail:
-            "The letter is fewer than three paragraphs. Split it into opening, evidence and " +
-            "close with blank lines between them.",
-    },
-    LOW_MATCH: {
-        label: "Low match",
-        detail: "The model scored this under 50. Read the gaps before spending time on it.",
-    },
-    SKIPPED_LOW_MATCH: {
-        label: "Letter skipped",
-        detail:
-            "The match was below your minimum, so no letter was written. The gaps are still " +
-            "worth reading. Regenerate with force if you want one anyway.",
-    },
-    NO_SPONSORSHIP: {
-        label: "No sponsorship",
-        detail:
-            "The posting states it does not sponsor visas. Nothing is wrong with the letter — " +
-            "the job may simply not be open to you.",
-    },
-    LANGUAGE_RISK: {
-        label: "Other language",
-        detail:
-            "The letter is not in English or Portuguese. The authorisation checks only read " +
-            "English, so they stayed silent here: review those sentences yourself.",
-    },
-    SALARY_BELOW_THRESHOLD: {
-        label: "Salary below threshold",
-        detail: "The stated salary is under the figure set for this country in countries.yaml.",
-    },
-    SALARY_CURRENCY_MISMATCH: {
-        label: "Other currency",
-        detail:
-            "The salary is quoted in a different currency, so it was not compared. No rate was " +
-            "invented — check it by hand.",
-    },
-};
+let FLAG_INFO = {};
+
+async function loadFlagInfo() {
+    try {
+        FLAG_INFO = await api("/api/flags");
+    } catch {
+        // Labels fall back to the flag's own words; the page still works.
+    }
+}
+
+/** Flags that stop the renderer producing a PDF. Shown in the warning colour. */
+function isBlocking(code) {
+    return Boolean(FLAG_INFO[code]?.blocking);
+}
 
 /** Never print a raw constant: an unmapped flag still reads as words. */
 function flagLabel(code) {
@@ -107,7 +37,7 @@ function flagLabel(code) {
 }
 
 function flagBadge(code) {
-    const badge = el("span", `badge${BLOCKING_FLAGS.has(code) ? " is-blocking" : ""}`, flagLabel(code));
+    const badge = el("span", `badge${isBlocking(code) ? " is-blocking" : ""}`, flagLabel(code));
     const detail = FLAG_INFO[code]?.detail;
     badge.title = detail ? `${code} — ${detail}` : code;
     return badge;
@@ -248,7 +178,7 @@ function statusPill(status) {
 }
 
 function buildRow(posting) {
-    const blocking = posting.flags.filter((flag) => BLOCKING_FLAGS.has(flag));
+    const blocking = posting.flags.filter(isBlocking);
     const row = el("li", `row${blocking.length ? " has-flags" : ""}`);
     row.dataset.id = posting.sourceId;
     if (posting.sourceId === state.selectedId) row.classList.add("is-selected");
@@ -392,7 +322,7 @@ async function openDetail(id) {
     for (const flag of posting.flags) summary.append(flagBadge(flag));
     pane.append(summary);
 
-    const blocking = posting.flags.filter((flag) => BLOCKING_FLAGS.has(flag));
+    const blocking = posting.flags.filter(isBlocking);
     if (blocking.length) {
         const notice = el("div", "notice");
         notice.append(
@@ -660,8 +590,9 @@ async function refreshAll() {
 /* Wiring                                                               */
 /* ------------------------------------------------------------------ */
 
-function init() {
+async function init() {
     loadSettings();
+    await loadFlagInfo();
 
     $("search").addEventListener("click", (event) => runSearch(event.currentTarget));
     $("keywords").addEventListener("keydown", (event) => {

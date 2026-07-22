@@ -4,6 +4,7 @@ import {mkdir, writeFile} from "node:fs/promises";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 import puppeteer, {type Browser, type Page} from "puppeteer";
+import {BLOCKING_FLAG_CODES, describeFlag} from "./flags.js";
 import {flags, type JobSpec, type Profile, type TailoredApplication} from "../types.js";
 import {slugify} from "./slug.js";
 
@@ -22,9 +23,9 @@ export class RenderBlockedError extends Error {
 
     constructor(blocking: readonly string[]) {
         super(
-            `Refusing to render: the application is flagged ${blocking.join(", ")}. ` +
-                "Read application.json, fix the letter, then re-render — or pass --force " +
-                "to produce a watermarked draft.",
+            "No PDF was produced — the letter needs a look first:\n" +
+                blocking.map((flag) => `  - ${describeFlag(flag)}`).join("\n") +
+                "\n  Fix the letter and re-render, or pass --force for a watermarked draft.",
         );
         this.blockingFlags = blocking;
     }
@@ -40,12 +41,8 @@ export class RenderOverflowError extends Error {
  * unverified. MISSING_AUTHORISATION_CLAIM is deliberately absent: a letter that
  * omits a statement is incomplete, not false.
  */
-const BLOCKING_FLAGS: readonly string[] = [
-    flags.unexpectedAuthorisationClaim,
-    flags.coverLetterRefMismatch,
-    flags.unsupportedTechClaim,
-    flags.invalidBulletIdsDropped,
-];
+// Defined once, in core/flags.ts, alongside the words that explain each one.
+const BLOCKING_FLAGS: readonly string[] = BLOCKING_FLAG_CODES;
 
 export const WATERMARK = "DRAFT — UNVERIFIED CLAIMS";
 
