@@ -252,24 +252,28 @@ function toRecord(row: Row): PostingRecord {
 }
 
 /**
- * Generated first because it is what needs acting on, then new, then the rest.
+ * Generated first because it is what needs acting on, then new, then leads —
+ * an email sighting waiting for a pasted description is live work, so it sits
+ * just below new, above the failed/applied/archived tail rather than dead last.
  * Within a bucket the strongest keyword hint leads, and an unscored posting
- * sorts last — null means "nothing recognised", not "scored zero".
+ * sorts last — null means "nothing recognised", not "scored zero". A lead has
+ * no posted_at, so the date sort falls back to the alert's own date.
  */
 const ORDER_BY = `
     ORDER BY CASE status
                  WHEN 'generated'  THEN 0
                  WHEN 'generating' THEN 1
                  WHEN 'new'        THEN 2
-                 WHEN 'failed'     THEN 3
-                 WHEN 'applied'    THEN 4
-                 WHEN 'dismissed'  THEN 5
-                 WHEN 'closed'     THEN 6
-                 ELSE 7
+                 WHEN 'lead'       THEN 3
+                 WHEN 'failed'     THEN 4
+                 WHEN 'applied'    THEN 5
+                 WHEN 'dismissed'  THEN 6
+                 WHEN 'closed'     THEN 7
+                 ELSE 8
              END,
              CASE WHEN pre_score IS NULL THEN 1 ELSE 0 END,
              pre_score DESC,
-             posted_at DESC`;
+             COALESCE(posted_at, email_date, fetched_at) DESC`;
 
 const SCHEMA_PATH = fileURLToPath(new URL("./schema.sql", import.meta.url));
 
@@ -426,7 +430,11 @@ export class TrackerStore {
             params["source"] = filter.source;
         }
         if (filter.language) {
-            where.push("language = @language");
+            // A lead has no body yet, so its language is null — which is "not
+            // known", not "not this language". Filtering the inbox by prose
+            // language would hide every lead, so a null language always passes;
+            // it is decided once the description is pasted.
+            where.push("(language = @language OR language IS NULL)");
             params["language"] = filter.language;
         }
         if (filter.q?.trim()) {

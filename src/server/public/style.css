@@ -14,6 +14,10 @@
     --warn-rule: #e8c9a0;
     --good-bg: #e6f4ea;
     --good-ink: #1c6b34;
+    --good-rule: #b6dcc1;
+    --bad-bg: #fdecec;
+    --bad-ink: #a3272b;
+    --bad-rule: #eebfc0;
     --radius: 10px;
 }
 
@@ -32,6 +36,10 @@
         --warn-rule: #5c4322;
         --good-bg: #1b3324;
         --good-ink: #8fd6a6;
+        --good-rule: #2f5a3f;
+        --bad-bg: #3a1e1f;
+        --bad-ink: #f0a0a2;
+        --bad-rule: #5c2e30;
     }
 }
 
@@ -215,7 +223,42 @@ button.primary { background: var(--accent); color: var(--accent-ink); border-col
 .row-meta { display: flex; gap: 10px; flex-wrap: wrap; color: var(--muted); font-size: 13px; }
 /* The language separates two populations of this market; worth reading at a glance. */
 .row-language { font-variant-caps: all-small-caps; letter-spacing: 0.4px; }
-.row-scores { margin-left: auto; display: flex; gap: 8px; font-variant-numeric: tabular-nums; }
+.row-scores { margin-left: auto; display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+
+/* Compatibility scores ---------------------------------------------------
+ * Two 0-100 signals graded on one three-band scale (weak <50, fair, strong 70+).
+ * `match` is the model's verdict — filled and bold. `pre` is the free keyword
+ * pre-filter — a soft outline that hints without shouting over the real score.
+ */
+.score {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    border-radius: 999px;
+    padding: 2px 9px;
+    border: 1px solid transparent;
+    line-height: 1.35;
+    white-space: nowrap;
+}
+.score-val { font-size: 12.5px; font-weight: 700; letter-spacing: -0.2px; }
+.score-cap { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.72; }
+
+/* `match`: filled, graded by band. */
+.score-match.score-strong { background: var(--good-bg); color: var(--good-ink); }
+.score-match.score-fair   { background: var(--warn-bg); color: var(--warn-ink); }
+.score-match.score-weak   { background: var(--bad-bg);  color: var(--bad-ink); }
+.score-match.score-none   { background: var(--surface-2); color: var(--muted); }
+
+/* `pre`: quiet outline, band shown by the border and the value's tint only. */
+.score-pre { background: transparent; color: var(--muted); }
+.score-pre .score-val { color: var(--ink); font-weight: 600; }
+.score-pre.score-strong { border-color: var(--good-rule); }
+.score-pre.score-strong .score-val { color: var(--good-ink); }
+.score-pre.score-fair   { border-color: var(--warn-rule); }
+.score-pre.score-fair   .score-val { color: var(--warn-ink); }
+.score-pre.score-weak   { border-color: var(--bad-rule); }
+.score-pre.score-weak   .score-val { color: var(--bad-ink); }
+.score-pre.score-none   { border-color: var(--rule); }
 
 .pill {
     font-size: 11px;

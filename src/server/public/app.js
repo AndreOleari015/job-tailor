@@ -223,6 +223,34 @@ function queuePill(sourceId, status) {
         : el("span", "pill status-queued", `queued · ${ordinal(queued.position)}`);
 }
 
+/**
+ * Both scores are 0-100. The bands match the one the model's own `lowMatch`
+ * flag draws at 50, with a stronger cut at 70, so the colour a row shows and
+ * the flag it carries never tell different stories.
+ */
+function scoreBand(value) {
+    if (value === null || value === undefined) return "none";
+    if (value >= 70) return "strong";
+    if (value >= 50) return "fair";
+    return "weak";
+}
+
+/**
+ * One compatibility chip. `match` is the model's verdict, shown filled and
+ * bold; `pre` is only the free keyword pre-filter — a hint that a posting is
+ * worth the model's time — so it reads as a quiet outline that never competes
+ * with the real score beside it. A null value is "not scored", an em dash with
+ * no colour, which is a different statement from a low score.
+ */
+function scoreChip(kind, value) {
+    const scored = value !== null && value !== undefined;
+    const chip = el("span", `score score-${scoreBand(value)} score-${kind}`);
+    chip.append(el("span", "score-val", scored ? value : "—"), el("span", "score-cap", kind));
+    const name = kind === "match" ? "Model match" : "Keyword pre-filter";
+    chip.title = scored ? `${name}: ${value} / 100` : `${name}: not scored yet`;
+    return chip;
+}
+
 function buildRow(posting) {
     const blocking = posting.flags.filter(isBlocking);
     const row = el("li", `row${blocking.length ? " has-flags" : ""}`);
@@ -237,14 +265,11 @@ function buildRow(posting) {
 
     const scores = el("div", "row-scores");
     // A lead has no description yet, so there is nothing to pre-score — the
-    // badge would be a meaningless em dash. For everything else "not scored" is
-    // a real statement, distinct from "scored zero", so the badge stays.
-    if (posting.status !== "lead") {
-        const pre = posting.preScore === null || posting.preScore === undefined ? "—" : posting.preScore;
-        scores.append(el("span", "badge", `pre ${pre}`));
-    }
+    // chip would be a meaningless em dash. For everything else "not scored" is
+    // a real statement, distinct from "scored zero", so the chip stays.
+    if (posting.status !== "lead") scores.append(scoreChip("pre", posting.preScore));
     if (posting.matchScore !== null && posting.matchScore !== undefined) {
-        scores.append(el("span", "badge", `match ${posting.matchScore}`));
+        scores.append(scoreChip("match", posting.matchScore));
     }
     scores.append(queuePill(posting.sourceId, posting.status));
     head.append(scores);
@@ -402,7 +427,7 @@ async function openDetail(id) {
     /* Generated content */
     pane.append(el("h3", null, "Result"));
     const summary = el("div", "row-scores");
-    if (posting.matchScore !== null) summary.append(el("span", "badge", `match ${posting.matchScore}`));
+    if (posting.matchScore !== null) summary.append(scoreChip("match", posting.matchScore));
     for (const flag of posting.flags) summary.append(flagBadge(flag));
     pane.append(summary);
 

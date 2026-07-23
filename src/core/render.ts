@@ -118,10 +118,20 @@ function formatRange(from: string, to: string): string {
     return `${formatMonth(from)} – ${formatMonth(to)}`;
 }
 
-/** "web_backend" -> "Web backend". */
+/** Category words that are acronyms, not prose — kept fully uppercase. */
+const ACRONYMS = new Set(["ai", "api", "ui", "ux", "qa", "ci", "cd", "sql", "css", "html"]);
+
+/** "web_backend" -> "Web backend"; "ai_tooling" -> "AI tooling". */
 function humanise(key: string): string {
     const spaced = key.replace(/[_-]+/g, " ").trim();
-    return spaced ? spaced.charAt(0).toUpperCase() + spaced.slice(1) : key;
+    if (!spaced) return key;
+    return spaced
+        .split(" ")
+        .map((word, index) => {
+            if (ACRONYMS.has(word)) return word.toUpperCase();
+            return index === 0 ? word.charAt(0).toUpperCase() + word.slice(1) : word;
+        })
+        .join(" ");
 }
 
 function isUnknownCompany(company: string): boolean {
